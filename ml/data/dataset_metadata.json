@@ -1,0 +1,53 @@
+{
+  "classes": [
+    "human_organic",
+    "paste",
+    "ai_assisted",
+    "copy_paste_hybrid",
+    "human_nonnative",
+    "human_coding"
+  ],
+  "class_to_id": {
+    "human_organic": 0,
+    "paste": 1,
+    "ai_assisted": 2,
+    "copy_paste_hybrid": 3,
+    "human_nonnative": 4,
+    "human_coding": 5
+  },
+  "samples_per_class": {
+    "human_organic": 5000,
+    "paste": 3000,
+    "ai_assisted": 3000,
+    "copy_paste_hybrid": 2000,
+    "human_nonnative": 2000,
+    "human_coding": 3000
+  },
+  "total_samples": 18000,
+  "features": [
+    "session_id",
+    "label",
+    "label_id",
+    "total_keystrokes",
+    "duration_ms",
+    "avg_dwell_time",
+    "std_dwell_time",
+    "min_dwell_time",
+    "max_dwell_time",
+    "avg_flight_time",
+    "std_flight_time",
+    "min_flight_time",
+    "max_flight_time",
+    "zero_dwell_ratio",
+    "zero_flight_ratio",
+    "pause_count",
+    "pause_ratio",
+    "backspace_ratio",
+    "tab_ratio",
+    "ctrl_ratio",
+    "symbol_ratio",
+    "long_pause_count",
+    "avg_long_pause",
+    "burst_count"
+  ]
+}

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     debug: bool = False
     
     # ML Model
-    onnx_model_path: str = "./ml/models/keystroke_model.onnx"
+    onnx_model_path: str = "./keystroke_multiclass.onnx"
     
     # Security
     secret_key: str = "change-this-in-production"

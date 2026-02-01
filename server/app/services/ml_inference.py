@@ -9,12 +9,24 @@ import onnxruntime as ort
 from app.config import get_settings
 
 
+# Multi-class labels
+CLASSES = [
+    'human_organic',
+    'paste',
+    'ai_assisted',
+    'copy_paste_hybrid',
+    'human_nonnative',
+    'human_coding',
+]
+
+
 class MLInferenceService:
     """Service for running ONNX model inference."""
 
     def __init__(self):
         self._session: Optional[ort.InferenceSession] = None
         self._settings = get_settings()
+        self._is_multiclass = False
 
     def _load_model(self) -> None:
         """Load ONNX model into memory."""
@@ -33,6 +45,12 @@ class MLInferenceService:
             sess_options,
             providers=["CPUExecutionProvider"],
         )
+        
+        # Detect if multi-class model (6 outputs vs 2)
+        if len(self._session.get_outputs()) > 1:
+            proba_shape = self._session.get_outputs()[1].shape
+            if proba_shape and len(proba_shape) > 1 and proba_shape[1] == 6:
+                self._is_multiclass = True
 
     @property
     def session(self) -> ort.InferenceSession:
@@ -49,30 +67,47 @@ class MLInferenceService:
             features: numpy array of shape (1, num_features)
             
         Returns:
-            Dict with prediction_score (0-1) and is_human boolean
+            Dict with class_label, class_id, confidence, and all class probabilities
         """
         try:
             input_name = self.session.get_inputs()[0].name
             outputs = self.session.run(None, {input_name: features})
             
-            # Assuming binary classification with probability output
-            if len(outputs) > 1:
-                # XGBoost outputs [labels, probabilities]
-                probabilities = outputs[1]
-                score = float(probabilities[0][1])  # Probability of human class
+            if self._is_multiclass:
+                # Multi-class model
+                class_id = int(outputs[0][0])
+                probabilities = outputs[1][0]
+                
+                return {
+                    "class_id": class_id,
+                    "class_label": CLASSES[class_id],
+                    "confidence": float(probabilities[class_id]),
+                    "probabilities": {
+                        CLASSES[i]: float(p) for i, p in enumerate(probabilities)
+                    },
+                    "is_human": class_id in [0, 4, 5],  # organic, nonnative, coding
+                }
             else:
-                # Single output (probability or logit)
-                score = float(outputs[0][0])
-            
-            return {
-                "prediction_score": score,
-                "is_human": score >= 0.5,
-            }
+                # Binary classification (backward compatibility)
+                if len(outputs) > 1:
+                    probabilities = outputs[1]
+                    score = float(probabilities[0][1])
+                else:
+                    score = float(outputs[0][0])
+                
+                return {
+                    "class_id": 0 if score >= 0.5 else 1,
+                    "class_label": "human" if score >= 0.5 else "non_human",
+                    "confidence": score if score >= 0.5 else (1 - score),
+                    "prediction_score": score,
+                    "is_human": score >= 0.5,
+                }
             
         except Exception as e:
-            # Fallback for when model isn't available
             return {
-                "prediction_score": -1.0,
+                "class_id": -1,
+                "class_label": "error",
+                "confidence": 0.0,
                 "is_human": False,
                 "error": str(e),
             }
@@ -81,10 +116,16 @@ class MLInferenceService:
         """Check if model is loaded and ready."""
         return self._session is not None
 
+    def is_multiclass(self) -> bool:
+        """Check if loaded model is multi-class."""
+        return self._is_multiclass
+
     def warmup(self) -> None:
         """Warm up the model with a dummy prediction."""
         try:
-            dummy_features = np.zeros((1, 36), dtype=np.float32)
+            # Use 21 features for multi-class, 36 for binary
+            num_features = 21 if self._is_multiclass else 36
+            dummy_features = np.zeros((1, num_features), dtype=np.float32)
             self.predict(dummy_features)
         except Exception:
             pass  # Model may not exist yet
@@ -92,3 +133,4 @@ class MLInferenceService:
 
 # Singleton instance
 ml_inference = MLInferenceService()
+

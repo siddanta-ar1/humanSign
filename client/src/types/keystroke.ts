@@ -9,6 +9,15 @@ export interface KeystrokeEvent {
 }
 
 /**
+ * Paste event for detecting copy-paste behavior.
+ */
+export interface PasteEvent {
+    event_type: 'paste';
+    pasted_length: number;
+    client_timestamp: number;
+}
+
+/**
  * Batch of keystroke events for API submission.
  */
 export interface KeystrokeBatch {
@@ -44,6 +53,7 @@ export interface VerificationResult {
  */
 export type ExtensionMessage =
     | { type: 'KEYSTROKE_BATCH'; payload: KeystrokeBatch }
+    | { type: 'PASTE_EVENT'; payload: { session_id: string; event: PasteEvent } }
     | { type: 'START_SESSION'; payload: { domain: string } }
     | { type: 'END_SESSION'; payload: { session_id: string } }
     | { type: 'VERIFY_SESSION'; payload: { session_id: string } };

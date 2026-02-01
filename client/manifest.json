@@ -1,14 +1,18 @@
 {
     "manifest_version": 3,
     "name": "HumanSign",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Keystroke dynamics verification for human authorship",
     "permissions": [
         "storage",
-        "activeTab"
+        "activeTab",
+        "downloads",
+        "scripting"
     ],
     "host_permissions": [
-        "http://localhost:8000/*"
+        "http://localhost:8000/*",
+        "http://localhost:3000/*",
+        "<all_urls>"
     ],
     "background": {
         "service_worker": "background.js",
@@ -22,11 +26,17 @@
             "js": [
                 "content.js"
             ],
-            "run_at": "document_idle"
+            "run_at": "document_start",
+            "all_frames": true
         }
     ],
     "action": {
-        "default_title": "HumanSign"
+        "default_title": "HumanSign",
+        "default_popup": "popup/popup.html",
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png"
+        }
     },
     "icons": {
         "16": "icons/icon16.png",

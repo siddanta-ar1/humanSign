@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HumanSign</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">✍️</span>
+                <span class="logo-text">HumanSign</span>
+            </div>
+            <div id="badge" class="badge badge-unknown">⚪</div>
+        </header>
+
+        <!-- Status Panel -->
+        <section class="status-panel">
+            <div class="status-row">
+                <span class="label">Status</span>
+                <span id="status-text" class="status-text">Idle</span>
+            </div>
+            <div class="status-row">
+                <span class="label">Session</span>
+                <span id="session-id" class="value">--</span>
+            </div>
+        </section>
+
+        <!-- Stats Grid -->
+        <section class="stats-grid">
+            <div class="stat-card">
+                <div id="keystroke-count" class="stat-value">0</div>
+                <div class="stat-label">Keystrokes</div>
+            </div>
+            <div class="stat-card">
+                <div id="wpm" class="stat-value">--</div>
+                <div class="stat-label">WPM</div>
+            </div>
+            <div class="stat-card">
+                <div id="dwell-avg" class="stat-value">--</div>
+                <div class="stat-label">Dwell (ms)</div>
+            </div>
+            <div class="stat-card">
+                <div id="flight-avg" class="stat-value">--</div>
+                <div class="stat-label">Flight (ms)</div>
+            </div>
+        </section>
+
+        <!-- Verification Result -->
+        <section id="verification-result" class="verification-result hidden">
+            <div class="result-header">
+                <span id="result-icon" class="result-icon">🟢</span>
+                <span id="result-label" class="result-label">Verified Human</span>
+            </div>
+            <div class="result-details">
+                <div class="detail-row">
+                    <span>Class</span>
+                    <span id="result-class">human_organic</span>
+                </div>
+                <div class="detail-row">
+                    <span>Confidence</span>
+                    <span id="result-confidence">98%</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Actions -->
+        <section class="actions">
+            <button id="btn-toggle" class="btn btn-toggle">
+                <span class="btn-icon">▶️</span>
+                Start Recording
+            </button>
+            <button id="btn-verify" class="btn btn-primary" disabled>
+                <span class="btn-icon">🔍</span>
+                Verify Session
+            </button>
+            <button id="btn-report" class="btn btn-secondary" disabled>
+                <span class="btn-icon">📥</span>
+                Download Report
+            </button>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span id="signature-status" class="signature-status">
+                🔐 Signatures: <span id="sig-count">0</span> chained
+            </span>
+        </footer>
+    </div>
+
+    <script src="popup.js" type="module"></script>
+</body>
+
+</html>

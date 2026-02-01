@@ -3,9 +3,10 @@
  *
  * Uses performance.now() for sub-millisecond accuracy.
  * Buffers events and sends them to background worker in batches.
+ * Also tracks paste events to detect copy-paste behavior.
  */
 
-import type { KeystrokeEvent, ExtensionMessage, ExtensionResponse, Session } from '../types';
+import type { KeystrokeEvent, PasteEvent, ExtensionMessage, ExtensionResponse, Session } from '../types';
 import { now, throttle } from '../utils/timing';
 
 // Configuration
@@ -15,11 +16,14 @@ const MIN_FLUSH_SIZE = 10;
 
 class KeystrokeTracker {
     private events: KeystrokeEvent[] = [];
+    private pasteEvents: PasteEvent[] = [];
     private sessionId: string | null = null;
     private batchSequence = 0;
     private isTracking = false;
     private flushTimeoutId: ReturnType<typeof setTimeout> | null = null;
     private lastFlushTime = 0;
+    private totalTypedChars = 0;
+    private totalPastedChars = 0;
 
     /**
      * Start tracking keystrokes.
@@ -28,6 +32,10 @@ class KeystrokeTracker {
         if (this.isTracking) {
             return;
         }
+
+        // Optimistic tracking: Start capturing immediately to avoid race conditions
+        this.isTracking = true;
+        this.attachListeners();
 
         try {
             // Request session from background worker
@@ -38,15 +46,25 @@ class KeystrokeTracker {
 
             if (response.success) {
                 this.sessionId = response.data.id;
-                this.isTracking = true;
-                this.attachListeners();
                 console.log('[HumanSign] Tracking started for session:', this.sessionId);
+                // Trigger an immediate flush in case we buffered events while waiting
+                this.scheduleFlush();
             } else {
                 console.error('[HumanSign] Failed to start session:', response.error);
+                // Revert state on failure
+                this.stopTrackingState();
             }
         } catch (error) {
             console.error('[HumanSign] Error starting tracking:', error);
+            this.stopTrackingState();
         }
+    }
+
+    private stopTrackingState(): void {
+        this.isTracking = false;
+        this.sessionId = null;
+        this.detachListeners();
+        this.events = [];
     }
 
     /**
@@ -111,6 +129,11 @@ class KeystrokeTracker {
             client_timestamp: now(),
         };
 
+        // Track typed characters (printable keys only)
+        if (event.key.length === 1) {
+            this.totalTypedChars++;
+        }
+
         this.events.push(keystrokeEvent);
         this.scheduleFlush();
     };
@@ -133,20 +156,397 @@ class KeystrokeTracker {
     };
 
     /**
+     * Handle paste event - CRITICAL for detecting AI content.
+     */
+    private handlePaste = (event: ClipboardEvent): void => {
+        if (!this.isTracking || !this.sessionId) return;
+
+        const pastedText = event.clipboardData?.getData('text') || '';
+        const pastedLength = pastedText.length;
+
+        if (pastedLength > 0) {
+            this.totalPastedChars += pastedLength;
+
+            // Generate synthetic keystrokes for ML detection
+            // This aligns with training data 'paste' class which expects zero-dwell keys
+            const currentTime = now();
+
+            // 1. Synthesize Ctrl+V (Mocking the trigger)
+            this.events.push({
+                event_type: 'keydown',
+                key_code: 17, // Ctrl
+                key_char: 'Control',
+                client_timestamp: currentTime
+            });
+            this.events.push({
+                event_type: 'keydown',
+                key_code: 86, // V
+                key_char: 'v',
+                client_timestamp: currentTime + 1
+            });
+            // We usually don't see keyups for these instantly in real paste, but for consistency:
+            this.events.push({
+                event_type: 'keyup',
+                key_code: 86, // V
+                key_char: 'v',
+                client_timestamp: currentTime + 2
+            });
+            this.events.push({
+                event_type: 'keyup',
+                key_code: 17, // Ctrl
+                key_char: 'Control',
+                client_timestamp: currentTime + 3
+            });
+
+            // 2. Synthesize pasted content as instant typing (0 dwell/flight)
+            // We iterate chars and push events
+            let timeOffset = 4;
+            // Limit synthesis for massive pastes to avoid locking browser
+            const MAX_SYNTHETIC = 2000;
+            const charsToProcess = Math.min(pastedLength, MAX_SYNTHETIC);
+
+            for (let i = 0; i < charsToProcess; i++) {
+                const char = pastedText[i];
+                // Approximate key code (safe enough for feature extraction which mostly cares about timing)
+                const code = char.toUpperCase().charCodeAt(0);
+
+                // Keydown
+                this.events.push({
+                    event_type: 'keydown',
+                    key_code: code,
+                    key_char: char,
+                    client_timestamp: currentTime + timeOffset
+                });
+
+                // Keyup (same time = 0 dwell)
+                this.events.push({
+                    event_type: 'keyup',
+                    key_code: code,
+                    key_char: char,
+                    client_timestamp: currentTime + timeOffset
+                });
+
+                // Increment very slightly to maintain sort order but effectively 0ms flight
+                timeOffset += 0.01;
+            }
+
+            const pasteEvent: PasteEvent = {
+                event_type: 'paste',
+                pasted_length: pastedLength,
+                client_timestamp: currentTime,
+            };
+
+            this.pasteEvents.push(pasteEvent);
+
+            // Send paste event immediately (don't batch)
+            this.sendMessage({
+                type: 'PASTE_EVENT',
+                payload: {
+                    session_id: this.sessionId,
+                    event: pasteEvent,
+                },
+            }).catch(console.error);
+
+            // Trigger flush to send synthetic keys
+            this.scheduleFlush();
+
+            console.log(`[HumanSign] Paste detected: ${pastedLength} chars (total pasted: ${this.totalPastedChars}, typed: ${this.totalTypedChars})`);
+        }
+    };
+
+    /**
      * Attach keyboard event listeners.
+     * Uses multiple strategies to capture keystrokes from various editors.
      */
     private attachListeners(): void {
-        document.addEventListener('keydown', this.handleKeyDown, { capture: true });
-        document.addEventListener('keyup', this.handleKeyUp, { capture: true });
+        // Strategy 1: Window-level capture (highest priority)
+        window.addEventListener('keydown', this.handleKeyDown, { capture: true, passive: true });
+        window.addEventListener('keyup', this.handleKeyUp, { capture: true, passive: true });
+
+        // Strategy 2: Document-level capture (fallback)
+        document.addEventListener('keydown', this.handleKeyDown, { capture: true, passive: true });
+        document.addEventListener('keyup', this.handleKeyUp, { capture: true, passive: true });
+
+        // Strategy 3: Monitor input events for editors that don't fire keyboard events
+        document.addEventListener('input', this.handleInput, { capture: true, passive: true });
+        document.addEventListener('beforeinput', this.handleInput, { capture: true, passive: true });
+
+        // Strategy 4: PASTE EVENT DETECTION (critical for AI content detection)
+        document.addEventListener('paste', this.handlePaste, { capture: true });
+        window.addEventListener('paste', this.handlePaste, { capture: true });
+
+        // Strategy 5: Window Message for AI Insertion (Robust across worlds)
+        window.addEventListener('message', this.handleWindowMessage, { capture: true });
+
+        // Strategy 6: Target ProseMirror/Tiptap/contenteditable elements DIRECTLY
+        this.attachToContentEditables();
+
+        // Safety: Flush on unload
+        window.addEventListener('beforeunload', this.handleBeforeUnload);
+
+        // Watch for dynamically added editors (React/Next.js apps)
+        this.observeDOM();
+
+        console.log('[HumanSign] Keystroke and paste listeners attached');
+    }
+
+    /**
+     * Handle explicit AI insertion via window.postMessage
+     */
+    private handleWindowMessage = (event: MessageEvent): void => {
+        // Security: Only accept messages from same window
+        if (event.source !== window) return;
+
+        if (event.data?.type === 'humanSign:aiInsert' && event.data?.text) {
+            this.synthesizeAiBurst(event.data.text);
+        }
+    };
+
+    /**
+     * Synthesize AI keys
+     */
+    private synthesizeAiBurst(text: string): void {
+        const currentTime = now();
+        console.log('[HumanSign] AI Insert Detected (Message):', text.length, 'chars');
+
+        // Synthesize "Fast Burst" keys (AI Assisted pattern)
+        // ML Training uses uniform(0, 5) ms for dwell/flight
+        let timeOffset = 1;
+        const MAX_SYNTHETIC = 1000;
+        const chars = text.slice(0, MAX_SYNTHETIC);
+
+        for (let i = 0; i < chars.length; i++) {
+            const char = chars[i];
+            const code = char.toUpperCase().charCodeAt(0);
+
+            // Random dwell and flight (0-5ms) to match ML training distribution
+            const dwell = Math.random() * 5;
+            const flight = Math.random() * 5;
+
+            // Keydown
+            this.events.push({
+                event_type: 'keydown',
+                key_code: code,
+                key_char: char,
+                client_timestamp: currentTime + timeOffset
+            });
+
+            // Keyup
+            this.events.push({
+                event_type: 'keyup',
+                key_code: code,
+                key_char: char,
+                client_timestamp: currentTime + timeOffset + dwell
+            });
+
+            // Advance time
+            timeOffset += (dwell + flight);
+        }
+
+        this.scheduleFlush();
+    }
+
+    private handleAiInsert = (event: CustomEvent): void => {
+        // Deprecated
+    };
+
+    /**
+     * Attach listeners to all contenteditable elements (ProseMirror, Tiptap, etc.)
+     */
+    private attachToContentEditables(): void {
+        // Target ProseMirror editors
+        const proseMirrors = document.querySelectorAll('.ProseMirror');
+        proseMirrors.forEach(el => {
+            el.addEventListener('keydown', this.handleKeyDown as EventListener, { capture: true, passive: true });
+            el.addEventListener('keyup', this.handleKeyUp as EventListener, { capture: true, passive: true });
+            el.addEventListener('paste', this.handlePaste as EventListener, { capture: true });
+            el.addEventListener('humanSign:aiInsert', this.handleAiInsert as EventListener, { capture: true }); // Also attach here
+            console.log('[HumanSign] Attached to ProseMirror editor');
+        });
+
+        // Target Monaco editors
+        const monacos = document.querySelectorAll('.monaco-editor textarea, .monaco-editor .inputarea');
+        monacos.forEach(el => {
+            el.addEventListener('keydown', this.handleKeyDown as EventListener, { capture: true, passive: true });
+            el.addEventListener('keyup', this.handleKeyUp as EventListener, { capture: true, passive: true });
+            // Monaco captures input aggressively, we rely on window/document capture for custom events often, but add safely:
+            el.addEventListener('humanSign:aiInsert', this.handleAiInsert as EventListener, { capture: true });
+            console.log('[HumanSign] Attached to Monaco editor');
+        });
+
+        // Target generic contenteditable
+        const editables = document.querySelectorAll('[contenteditable="true"]');
+        editables.forEach(el => {
+            el.addEventListener('keydown', this.handleKeyDown as EventListener, { capture: true, passive: true });
+            el.addEventListener('keyup', this.handleKeyUp as EventListener, { capture: true, passive: true });
+            el.addEventListener('paste', this.handlePaste as EventListener, { capture: true });
+        });
+
+        // Target textareas and inputs
+        const inputs = document.querySelectorAll('textarea, input[type="text"]');
+        inputs.forEach(el => {
+            el.addEventListener('keydown', this.handleKeyDown as EventListener, { capture: true, passive: true });
+            el.addEventListener('keyup', this.handleKeyUp as EventListener, { capture: true, passive: true });
+        });
+    }
+
+    private domObserver: MutationObserver | null = null;
+
+    /**
+     * Observe DOM for dynamically added editors
+     */
+    private observeDOM(): void {
+        if (this.domObserver) return;
+
+        this.domObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                const addedNodes = Array.from(mutation.addedNodes);
+                for (const node of addedNodes) {
+                    if (node instanceof HTMLElement) {
+                        // Check if a ProseMirror or contenteditable was added
+                        if (node.classList?.contains('ProseMirror') ||
+                            node.getAttribute('contenteditable') === 'true') {
+                            node.addEventListener('keydown', this.handleKeyDown as EventListener, { capture: true, passive: true });
+                            node.addEventListener('keyup', this.handleKeyUp as EventListener, { capture: true, passive: true });
+                            node.addEventListener('paste', this.handlePaste as EventListener, { capture: true });
+                            console.log('[HumanSign] Attached to dynamically added editor');
+                        }
+                        // Check descendants
+                        const proseMirror = node.querySelector?.('.ProseMirror');
+                        if (proseMirror) {
+                            proseMirror.addEventListener('keydown', this.handleKeyDown as EventListener, { capture: true, passive: true });
+                            proseMirror.addEventListener('keyup', this.handleKeyUp as EventListener, { capture: true, passive: true });
+                            proseMirror.addEventListener('paste', this.handlePaste as EventListener, { capture: true });
+                            console.log('[HumanSign] Attached to ProseMirror in added node');
+                        }
+                    }
+                }
+            }
+        });
+
+        this.domObserver.observe(document.body, { childList: true, subtree: true });
     }
 
     /**
      * Detach keyboard event listeners.
      */
     private detachListeners(): void {
+        window.removeEventListener('keydown', this.handleKeyDown, { capture: true });
+        window.removeEventListener('keyup', this.handleKeyUp, { capture: true });
         document.removeEventListener('keydown', this.handleKeyDown, { capture: true });
         document.removeEventListener('keyup', this.handleKeyUp, { capture: true });
+        document.removeEventListener('input', this.handleInput, { capture: true });
+        document.removeEventListener('beforeinput', this.handleInput, { capture: true });
+        document.removeEventListener('paste', this.handlePaste, { capture: true });
+        window.removeEventListener('paste', this.handlePaste, { capture: true });
+
+        // Remove message listener
+        window.removeEventListener('message', this.handleWindowMessage, { capture: true });
+
+        this.attachToContentEditables = () => { /* no-op during tracking */ }; // Simplified cleanup for custom strategy
+
+        // Clean up DOM observer
+        if (this.domObserver) {
+            this.domObserver.disconnect();
+            this.domObserver = null;
+        }
+
+        console.log('[HumanSign] Keystroke and paste listeners detached');
     }
+
+    /**
+     * Handle input event (fallback for editors and detection of Autocomplete/AI)
+     */
+    private handleInput = (event: Event): void => {
+        if (!this.isTracking) return;
+
+        const inputEvent = event as InputEvent;
+
+        // 1. Detect AI Autocomplete / Bulk Insertion (not paste)
+        // If inputType implies insertion and data is long, it's likely an autocomplete acceptance or software input
+        const isBulkInsert = inputEvent.data && inputEvent.data.length > 5 && inputEvent.inputType !== 'insertFromPaste';
+
+        if (isBulkInsert && inputEvent.data) {
+            const text = inputEvent.data;
+            const currentTime = now();
+
+            // Check if preceding key was Tab (common for AI acceptance)
+            const lastEvent = this.events[this.events.length - 1];
+            const wasTabTriggered = lastEvent && lastEvent.key_code === 9 && (currentTime - lastEvent.client_timestamp < 500);
+
+            if (wasTabTriggered || inputEvent.inputType === 'insertReplacementText') {
+                console.log('[HumanSign] AI Autocomplete detected:', text.length, 'chars');
+
+                // Synthesize "Fast Burst" keys (AI Assisted pattern: Tab -> Fast Keys)
+                // ML Training uses uniform(0, 5) ms for dwell/flight
+                let timeOffset = 1;
+                const MAX_SYNTHETIC = 1000;
+                const chars = text.slice(0, MAX_SYNTHETIC);
+
+                for (let i = 0; i < chars.length; i++) {
+                    const char = chars[i];
+                    const code = char.toUpperCase().charCodeAt(0);
+
+                    // Random dwell and flight (0-5ms) to match ML training distribution
+                    // Training data uses np.random.uniform(0, 5)
+                    const dwell = Math.random() * 5;
+                    const flight = Math.random() * 5;
+
+                    // Keydown
+                    this.events.push({
+                        event_type: 'keydown',
+                        key_code: code,
+                        key_char: char,
+                        client_timestamp: currentTime + timeOffset
+                    });
+
+                    // Keyup
+                    this.events.push({
+                        event_type: 'keyup',
+                        key_code: code,
+                        key_char: char,
+                        client_timestamp: currentTime + timeOffset + dwell
+                    });
+
+                    // Advance time
+                    timeOffset += (dwell + flight);
+                }
+
+                this.scheduleFlush();
+                return;
+            }
+        }
+
+        // 2. Standard single character input fallback
+        if (inputEvent.data && inputEvent.data.length === 1) {
+            const keystrokeEvent: KeystrokeEvent = {
+                event_type: 'keydown',
+                key_code: inputEvent.data.charCodeAt(0),
+                key_char: inputEvent.data,
+                client_timestamp: now(),
+            };
+            this.events.push(keystrokeEvent);
+            this.totalTypedChars++;
+
+            // Add synthetic keyup
+            const keyupEvent: KeystrokeEvent = {
+                event_type: 'keyup',
+                key_code: inputEvent.data.charCodeAt(0),
+                key_char: inputEvent.data,
+                client_timestamp: now() + 50, // Approximate keyup delay
+            };
+            this.events.push(keyupEvent);
+
+            this.scheduleFlush();
+        }
+    };
+
+    /**
+     * Handle tab close/navigation.
+     */
+    private handleBeforeUnload = (): void => {
+        void this.flush(true);
+    };
 
     /**
      * Schedule a flush of buffered events.
@@ -169,9 +569,15 @@ class KeystrokeTracker {
 
     /**
      * Flush buffered events to background worker.
+     * @param force - If true, ignores MIN_FLUSH_SIZE check
      */
-    private async flush(): Promise<void> {
-        if (this.events.length < MIN_FLUSH_SIZE || !this.sessionId) {
+    private async flush(force: boolean = false): Promise<void> {
+        if (!this.sessionId || (this.events.length === 0)) {
+            return;
+        }
+
+        // Only enforce min size if not forcing
+        if (!force && this.events.length < MIN_FLUSH_SIZE) {
             return;
         }
 
@@ -188,6 +594,11 @@ class KeystrokeTracker {
                 },
             });
             this.lastFlushTime = now();
+
+            // If we forced a flush and there are still events left (unlikely given slice logic loop, but possible), flush again?
+            // Actually slice takes BATCH_SIZE. If we have > BATCH_SIZE, we might leave some.
+            // On unload we probably only care about one batch or loop. 
+            // Loop for unload is risky (might be killed). One batch is better than nothing.
         } catch (error) {
             // Re-add events to buffer on failure
             this.events = [...eventsToSend, ...this.events];
@@ -211,9 +622,12 @@ class KeystrokeTracker {
      */
     private reset(): void {
         this.events = [];
+        this.pasteEvents = [];
         this.sessionId = null;
         this.batchSequence = 0;
         this.isTracking = false;
+        this.totalTypedChars = 0;
+        this.totalPastedChars = 0;
         if (this.flushTimeoutId) {
             clearTimeout(this.flushTimeoutId);
             this.flushTimeoutId = null;
@@ -223,11 +637,22 @@ class KeystrokeTracker {
     /**
      * Get current tracking status.
      */
-    get status(): { isTracking: boolean; sessionId: string | null; bufferedEvents: number } {
+    get status(): {
+        isTracking: boolean;
+        sessionId: string | null;
+        bufferedEvents: number;
+        typedChars: number;
+        pastedChars: number;
+        pasteRatio: number;
+    } {
+        const total = this.totalTypedChars + this.totalPastedChars;
         return {
             isTracking: this.isTracking,
             sessionId: this.sessionId,
             bufferedEvents: this.events.length,
+            typedChars: this.totalTypedChars,
+            pastedChars: this.totalPastedChars,
+            pasteRatio: total > 0 ? this.totalPastedChars / total : 0,
         };
     }
 }

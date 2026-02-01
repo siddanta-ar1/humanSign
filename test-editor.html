@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HumanSign Test Editor</title>
+    <style>
+        :root {
+            --bg: #0a0a14;
+            --bg-card: #1a1a2e;
+            --accent: #6c5ce7;
+            --accent-light: #a29bfe;
+            --text: #ffffff;
+            --text-muted: #8888aa;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        h1 {
+            font-size: 28px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+        }
+
+        .editor-container {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .editor-label {
+            display: block;
+            color: var(--text-muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+
+        #editor {
+            width: 100%;
+            min-height: 300px;
+            background: #0d0d1a;
+            border: 2px solid #2a2a4a;
+            border-radius: 12px;
+            padding: 16px;
+            color: var(--text);
+            font-size: 16px;
+            line-height: 1.6;
+            resize: vertical;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #editor:focus {
+            border-color: var(--accent);
+        }
+
+        .stats-bar {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            padding: 16px;
+            background: var(--bg-card);
+            border-radius: 12px;
+            margin-bottom: 24px;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-light);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .instructions {
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, rgba(108, 92, 231, 0.1), transparent);
+            border-radius: 12px;
+            border: 1px solid rgba(108, 92, 231, 0.3);
+        }
+
+        .instructions h3 {
+            margin-bottom: 12px;
+        }
+
+        .instructions ol {
+            text-align: left;
+            display: inline-block;
+            color: var(--text-muted);
+        }
+
+        .instructions li {
+            margin: 8px 0;
+        }
+
+        .recording-indicator {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 16px;
+            color: #00b894;
+        }
+
+        .recording-indicator.active {
+            display: flex;
+        }
+
+        .pulse {
+            width: 12px;
+            height: 12px;
+            background: #00b894;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.5;
+                transform: scale(1.2);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>✍️ HumanSign Test Editor</h1>
+            <p class="subtitle">Type below to test keystroke capture</p>
+        </header>
+
+        <div class="stats-bar">
+            <div class="stat">
+                <div class="stat-value" id="keystroke-count">0</div>
+                <div class="stat-label">Keystrokes</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="wpm">--</div>
+                <div class="stat-label">WPM</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="chars">0</div>
+                <div class="stat-label">Characters</div>
+            </div>
+        </div>
+
+        <div class="editor-container">
+            <label class="editor-label">Start typing to record keystrokes</label>
+            <textarea id="editor"
+                placeholder="Type here to test HumanSign extension...&#10;&#10;Try typing a paragraph naturally to generate keystroke data for verification."></textarea>
+
+            <div class="recording-indicator" id="recording">
+                <span class="pulse"></span>
+                <span>Recording keystrokes...</span>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>📋 How to Test</h3>
+            <ol>
+                <li>Make sure HumanSign extension is loaded in Chrome</li>
+                <li>Type naturally in the editor above</li>
+                <li>Click the extension icon to see stats</li>
+                <li>Click "Verify Session" to analyze</li>
+                <li>Click "Generate Report" to download .humanSign file</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        const editor = document.getElementById('editor');
+        const countEl = document.getElementById('keystroke-count');
+        const wpmEl = document.getElementById('wpm');
+        const charsEl = document.getElementById('chars');
+        const recordingEl = document.getElementById('recording');
+
+        let keystrokeCount = 0;
+        let startTime = null;
+
+        editor.addEventListener('keydown', () => {
+            if (!startTime) {
+                startTime = Date.now();
+                recordingEl.classList.add('active');
+            }
+            keystrokeCount++;
+            countEl.textContent = keystrokeCount;
+            charsEl.textContent = editor.value.length;
+
+            // Calculate WPM
+            const elapsed = (Date.now() - startTime) / 1000 / 60; // minutes
+            if (elapsed > 0.05) { // At least 3 seconds
+                const words = editor.value.trim().split(/\s+/).filter(w => w.length > 0).length;
+                const wpm = Math.round(words / elapsed);
+                wpmEl.textContent = wpm > 0 ? wpm : '--';
+            }
+        });
+    </script>
+</body>
+
+</html>

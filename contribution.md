@@ -1,172 +1,144 @@
-# HumanSign Implementation Walkthrough
+![HumanSign Banner](banner.png)
 
-## Summary
-Built a complete **keystroke dynamics verification system** with:
-* **Browser Extension** (TypeScript + Vite) for keystroke capture
-* **Backend API** (FastAPI) for data processing and inference
-* **ML Pipeline** (XGBoost → ONNX) for human vs bot classification
-* **Database** (PostgreSQL + TimescaleDB) for time-series storage
+# HumanSign Contribution Guide
+
+Welcome to **HumanSign**! This project aims to authenticate human content on the web by analyzing the *process* of creation (keystrokes), not just the final output. We use high-precision behavioral biometrics to distinguish between organic human typing and AI generation or copy-pasting.
+
+## 🛠️ Technology Stack
+
+### Frontend (Web Application)
+- **Framework**: [Next.js 16.1](https://nextjs.org/) (App Router, Turbopack)
+- **UI Library**: [React 19](https://react.dev/)
+- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
+- **Editors**:
+    - [Monaco Editor](https://microsoft.github.io/monaco-editor/) (Code)
+    - [Tiptap](https://tiptap.dev/) (Rich Text)
+- **Icons**: [Lucide React](https://lucide.dev/)
+- **Animations**: [Framer Motion](https://www.framer.com/motion/)
+
+### Browser Extension
+- **Manifest**: V3
+- **Build Tool**: [Vite 5](https://vitejs.dev/)
+- **Language**: TypeScript 5.3
+- **Communication**: Cross-context messaging (Window <-> Content Script <-> Background Worker)
+
+### Backend & AI
+- **API**: [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
+- **Database**: [PostgreSQL (TimescaleDB)](https://www.timescale.com/)
+- **ML Inference**: [ONNX Runtime](https://onnxruntime.ai/)
+- **Data Model**: Pydantic v2
 
 ---
 
-## Project Structure
-```text
-humanSign/
-├── client/                # Browser Extension
-│   ├── src/
-│   │   ├── content/       # Keystroke capture (performance.now())
-│   │   ├── background/    # API communication
-│   │   ├── types/         # TypeScript definitions
-│   │   └── utils/         # Timing utilities
-│   ├── manifest.json      # Chrome Extension manifest v3
-│   └── vite.config.ts     # Build config
-│
-├── server/                # FastAPI Backend
-│   └── app/
-│       ├── api/routes/    # keystrokes, sessions, verification
-│       ├── models/        # Pydantic schemas
-│       ├── services/      # keystroke, feature, ML inference
-│       ├── db/            # asyncpg + queries
-│       ├── main.py        # Entry point
-│       └── config.py      # Settings
-│
-├── ml/                    # Training Pipeline
-│   └── src/
-│       ├── preprocessing.py
-│       ├── feature_engineering.py
-│       ├── train_xgboost.py
-│       └── export_onnx.py
-│
-├── db/schema.sql          # TimescaleDB schema
-└── docker-compose.yml     # Full stack
+## 🔬 Methodology & Core Concepts
+
+### 1. Keystroke Dynamics
+We verify humanity by measuring:
+- **Dwell Time**: The duration a key is held down (`keyup - keydown`).
+- **Flight Time**: The latency between releasing one key and pressing the next (`keydown[n] - keyup[n-1]`).
+- **Precision**: All events are time-stamped with `performance.now()` in the browser for sub-millisecond accuracy.
+
+### 2. AI & Paste Detection
+- **Burst Analysis**: AI content often appears in "bursts" (0ms flight time, perfectly consistent). We detect these anomalies using entropy analysis.
+- **Paste Ratio**: We track clipboard events versus typed characters. A high paste ratio flags content as "AI-Assisted" or "Paste".
+- **ONNX Model**: A lightweight Random Forest classifier runs on the server (and potentially locally) to classify sessions as `human_organic`, `ai_assisted`, or `paste`.
+
+### 3. Security Architecture
+- **Isolated Worlds**: The extension uses a `window.postMessage` bridge to securely listen for events from the web app (like AI autocomplete insertions) without exposing privileged extension APIs.
+- **State Persistence**: The Service Worker implements a robust persistence layer (`chrome.storage.session`) to survive browser idle suspensions, ensuring no data loss during long writing sessions.
+- **Cryptographic Signing**: Verified reports are signed client-side using **ECDSA-P256-SHA256** keys generated via the Web Crypto API.
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    subgraph Browser
+        A[Web App (Next.js)] -->|postMessage| B[Content Script]
+        B -->|Runtime Message| C[Background Worker]
+        C -->|chrome.storage| D[Session Storage]
+    end
+
+    subgraph Server
+        E[FastAPI Service]
+        F[ONNX Model]
+        G[PostgreSQL DB]
+    end
+
+    C -->|REST API (Batches)| E
+    E -->|Inference| F
+    E -->|Store Rights| G
 ```
 
----
-
-## Key Components
-
-### 1. Browser Extension
-| File | Purpose |
-|------|---------|
-| `keystroke-tracker.ts` | Core tracking with performance.now() |
-| `api-client.ts` | Backend communication |
-
-**Features:**
-- Sub-millisecond timing precision
-- Event buffering (100 per batch)
-- Auto-tracking on text input focus
+### Data Flow
+1.  **User Types**: `KeystrokeTracker` captures `keydown`/`keyup` events.
+2.  **Buffering**: Events are buffered (batch size 100) to minimize network traffic.
+3.  **Transmission**: Background worker sends batches to the backend.
+4.  **Verification**: User clicks "Verify". Backend aggregates timing data, runs ML inference, and returns a confidence score.
 
 ---
 
-### 2. FastAPI Backend
+## 🚀 Running Locally
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/v1/keystrokes/batch` | POST | Ingest keystroke events |
-| `/api/v1/sessions/start` | POST | Start typing session |
-| `/api/v1/sessions/{id}/end` | POST | End session |
-| `/api/v1/verify` | POST | ML verification |
+### Prerequisites
+- Node.js 18+
+- Python 3.10+
+- Docker & Docker Compose
 
-**Services:**
-- `keystroke_service.py` - Dwell/flight time calculation
-- `feature_extractor.py` - 36 ML features
-- `ml_inference.py` - ONNX Runtime
-
----
-
-### 3. ML Pipeline
-
-| Script | Purpose |
-|--------|---------|
-| `train_xgboost.py` | Train binary classifier |
-| `export_onnx.py` | Convert to ONNX |
-
-**36 Features:**
-- 16 basic stats (dwell/flight time statistics)
-- 20 digraph latencies (common letter pairs)
-
----
-
-### 4. Database Schema
-`schema.sql` - TimescaleDB hypertable with:
-- `keystrokes` - High-frequency time-series data
-- `sessions` - Writing session tracking
-- `session_features` - Aggregated ML features
-
----
-
-## Setup Instructions
-
-### 1. Start Database
+### 1. Backend & Database
 ```bash
-docker compose up -d postgres
+git clone https://github.com/b0sc/humanSign.git
+cd humanSign
+# Start API and DB
+docker-compose up -d --build
 ```
+*API will run on `http://localhost:8000`.*
 
-### 2. Install Backend
+### 2. Frontend (Web)
 ```bash
-cd server
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+cd web
+npm install
+# Configure env
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1" > .env.local
+npm run dev
 ```
+*Web app will run on `http://localhost:3000`.*
 
-### 3. Build Extension
+### 3. Browser Extension
 ```bash
 cd client
 npm install
 npm run build
-# Load dist/ as unpacked extension in Chrome
 ```
-
-### 4. Train Model
-```bash
-cd ml
-pip install -r requirements.txt
-cd src
-python train_xgboost.py
-python export_onnx.py
-```
+1.  Open Chrome: `chrome://extensions`
+2.  Enable **Developer Mode**.
+3.  Click **Load Unpacked**.
+4.  Select `humanSign/client/dist`.
 
 ---
 
-## Data Flow
-```mermaid
-graph TD
-    A[User Types] -->|performance.now| B[Content Script]
-    B -->|Batch Events| C[FastAPI]
-    C -->|Calculate Dwell/Flight| D[TimescaleDB]
-    D -->|Feature Extraction| E[ONNX Inference]
-    E -->|Human/Bot Score| F[End User/API]
-    
-    subgraph Browser
-    A
-    B
-    end
-    
-    subgraph Server
-    C
-    E
-    end
-    
-    subgraph Database
-    D
-    end
-```
+## 🐛 Known Issues & Debugging
 
-**Note:** The flow includes `POST /keystrokes` for ingestion and `POST /verify` for the inference step.
+### AI Misclassification
+- **Issue**: Sometimes rapid typists (>120 WPM) are flagged as AI.
+- **Status**: Improved in v1.1 using dwell-time variance analysis.
+
+### Service Worker Sleep
+- **Issue**: Statistics might reset if you leave the tab idle for >30s.
+- **Fix**: **Resolved** in v1.2 using storage persistence.
+
+### Safari Support
+- partial. The extension currently relies on Chrome/Edge specific APIs (`chrome.action`).
 
 ---
 
-## Next Steps
+## 🤝 Contributing
 
-1. Download datasets from the spreadsheet (DS-01 Aalto, DS-12 Liveness Detection)
-2. Train model on real data:
-```bash
-   python train_xgboost.py --data-dir ../data
-```
-3. Export ONNX:
-```bash
-   python export_onnx.py --benchmark
-```
-4. Test extension in Chrome with local backend running
+1.  Fork the repo.
+2.  Create a branch: `git checkout -b feature/amazing-feature`.
+3.  Commit changes: `git commit -m 'Add amazing feature'`.
+4.  Push: `git push origin feature/amazing-feature`.
+5.  Open a Pull Request.
+
+Please ensure all new code includes proper TypeScript types and Python type hints.

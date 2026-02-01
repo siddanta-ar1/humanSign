@@ -84,7 +84,7 @@ export async function sendKeystrokeBatch(
 }
 
 /**
- * Verify a session.
+ * Verify a session (keystroke analysis only).
  */
 export async function verifySession(
     sessionId: string
@@ -92,6 +92,49 @@ export async function verifySession(
     return apiRequest<VerificationResult>('/verify', {
         method: 'POST',
         body: JSON.stringify({ session_id: sessionId }),
+    });
+}
+
+/**
+ * Combined verification with keystroke + content analysis.
+ * This is the most accurate verification method.
+ */
+export interface CombinedVerificationResult {
+    session_id: string;
+    is_human: boolean;
+    confidence_score: number;
+    verdict: string;
+    keystroke_analysis: {
+        is_human?: boolean;
+        confidence?: number;
+        features?: Record<string, number>;
+        error?: string;
+    };
+    content_analysis: {
+        is_human?: boolean;
+        confidence?: number;
+        human_score?: number;
+        verdict?: string;
+        features?: Record<string, number>;
+        error?: string;
+    };
+    combined_features: {
+        keystroke_weight: number;
+        content_weight: number;
+    };
+    computed_at: string;
+}
+
+export async function verifyCombined(
+    sessionId: string,
+    textContent: string
+): Promise<CombinedVerificationResult> {
+    return apiRequest<CombinedVerificationResult>('/verify/combined', {
+        method: 'POST',
+        body: JSON.stringify({
+            session_id: sessionId,
+            text_content: textContent,
+        }),
     });
 }
 
@@ -110,3 +153,4 @@ async function getUserId(): Promise<string> {
     await chrome.storage.local.set({ userId });
     return userId;
 }
+

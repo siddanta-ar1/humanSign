@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-02-01T23:58:54.539882",
+  "num_classes": 6,
+  "classes": [
+    "human_organic",
+    "paste",
+    "ai_assisted",
+    "copy_paste_hybrid",
+    "human_nonnative",
+    "human_coding"
+  ],
+  "features": [
+    "total_keystrokes",
+    "duration_ms",
+    "avg_dwell_time",
+    "std_dwell_time",
+    "min_dwell_time",
+    "max_dwell_time",
+    "avg_flight_time",
+    "std_flight_time",
+    "min_flight_time",
+    "max_flight_time",
+    "zero_dwell_ratio",
+    "zero_flight_ratio",
+    "pause_count",
+    "pause_ratio",
+    "backspace_ratio",
+    "tab_ratio",
+    "ctrl_ratio",
+    "symbol_ratio",
+    "long_pause_count",
+    "avg_long_pause",
+    "burst_count"
+  ],
+  "num_features": 21,
+  "metrics": {
+    "accuracy": 1.0
+  }
+}
