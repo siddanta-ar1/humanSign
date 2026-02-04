@@ -589,6 +589,70 @@ async function handleMessage(
       // Generate stats
       const stats = calculateStats();
 
+      // Build classification from current state - ensure consistency with popup
+      const totalForeign = state.totalPastedChars + state.totalAiChars;
+      const totalChars = state.totalTypedChars + totalForeign;
+
+      let classificationData: {
+        verdict: string;
+        class_label: string;
+        confidence: number;
+        is_human: boolean;
+        paste_ratio: number;
+        ai_ratio: number;
+        human_ratio: number;
+      };
+
+      if (totalChars > 20) {
+        const pctHuman = state.totalTypedChars / totalChars;
+        const pctPaste = state.totalPastedChars / totalChars;
+        const pctAi = state.totalAiChars / totalChars;
+
+        let verdict: string;
+        let isHuman: boolean;
+        let confidence: number;
+
+        // Priority: Paste > AI > Human (same logic as real-time)
+        if (pctPaste > 0.1) {
+          verdict = pctPaste > 0.5 ? "paste" : "paste_detected";
+          isHuman = false;
+          confidence = Math.min(0.5 + pctPaste * 0.5, 0.99);
+        } else if (pctAi > 0.1) {
+          verdict = "ai_assisted";
+          isHuman = false;
+          confidence = Math.min(0.5 + pctAi * 0.5, 0.99);
+        } else if (pctHuman >= 0.9) {
+          verdict = "human_organic";
+          isHuman = true;
+          confidence = Math.min(0.7 + pctHuman * 0.3, 0.99);
+        } else {
+          verdict = state.lastVerification?.class_label || "unknown";
+          isHuman = state.lastVerification?.is_human || false;
+          confidence = state.lastVerification?.confidence || 0.5;
+        }
+
+        classificationData = {
+          verdict,
+          class_label: verdict,
+          confidence,
+          is_human: isHuman,
+          paste_ratio: pctPaste,
+          ai_ratio: pctAi,
+          human_ratio: pctHuman,
+        };
+      } else {
+        // Not enough data
+        classificationData = {
+          verdict: "unverified",
+          class_label: "unverified",
+          confidence: 0,
+          is_human: false,
+          paste_ratio: 0,
+          ai_ratio: 0,
+          human_ratio: 1,
+        };
+      }
+
       // Create the .humanSign metadata with crypto signature
       const humanSignData = {
         version: "1.0",
@@ -604,12 +668,11 @@ async function handleMessage(
           avg_flight_ms: Math.round(stats.avgFlight),
           wpm: Math.round(stats.wpm),
           text_length: textContent.length,
+          total_typed_chars: state.totalTypedChars,
+          total_pasted_chars: state.totalPastedChars,
+          total_ai_chars: state.totalAiChars,
         },
-        classification: state.lastVerification || {
-          verdict: "unverified",
-          confidence: 0,
-          is_human: false,
-        },
+        classification: classificationData,
         timing_data: {
           dwell_histogram: createHistogram(stats.dwellTimes, 10, 0, 200),
           flight_histogram: createHistogram(stats.flightTimes, 10, 0, 300),
