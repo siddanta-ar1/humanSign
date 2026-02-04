@@ -1,36 +1,23 @@
 "use client";
 import { Navigation } from "@/components/layout/navigation";
 import { Toaster, toast } from "sonner";
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   FileUp,
-  ShieldCheck,
-  ShieldAlert,
+  CheckCircle2,
+  XCircle,
+  Shield,
+  FileText,
+  Clock,
   Keyboard,
   Zap,
-  Clock,
-  Plane,
-  FileText,
-  AlertTriangle,
-  Info,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import JSZip from "jszip";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-} from "recharts";
 
-// --- Types ---
 interface HumanSignData {
   version: string;
   generated_at: string;
@@ -73,292 +60,477 @@ interface HumanSignData {
 
 export default function DecoderPage() {
   const [data, setData] = useState<HumanSignData | null>(null);
+  const [documentContent, setDocumentContent] = useState("");
+  const [verificationStatus, setVerificationStatus] = useState<
+    "pending" | "valid" | "invalid" | "none"
+  >("none");
   const [isDragOver, setIsDragOver] = useState(false);
   const [fileName, setFileName] = useState("");
 
   const handleFile = async (file: File) => {
     try {
       setFileName(file.name);
+
       if (file.name.endsWith(".zip")) {
         const zip = await JSZip.loadAsync(file);
         const metadataFile = zip.file("metadata.humanSign");
-        if (!metadataFile) throw new Error("No metadata found");
-        const json = await metadataFile.async("string");
-        setData(JSON.parse(json));
+        if (!metadataFile)
+          throw new Error("No metadata.humanSign found in ZIP");
+        const metadataJson = await metadataFile.async("string");
+        const parsedData = JSON.parse(metadataJson) as HumanSignData;
+        setData(parsedData);
+
+        const docFile = zip.file("document.txt");
+        if (docFile) {
+          const docContent = await docFile.async("string");
+          setDocumentContent(docContent);
+        }
+        await verifySignature(parsedData);
+        toast.success("ZIP file parsed successfully");
       } else {
         const text = await file.text();
-        // Regex extract if stuck in text format
-        let jsonString = text;
+        let jsonString = "";
         try {
           JSON.parse(text);
+          jsonString = text;
         } catch {
-          const match = text.match(/=== HUMANSIGN METADATA \(DO NOT MODIFY\) ===\s*([\s\S]*?)\s*={60}/);
-          if (match) jsonString = match[1];
+          const match = text.match(
+            /=== HUMANSIGN METADATA \(DO NOT MODIFY\) ===\s*([\s\S]*?)\s*={60}/,
+          );
+          if (match && match[1]) jsonString = match[1];
+          else throw new Error("No valid HumanSign metadata found");
         }
-        setData(JSON.parse(jsonString));
+        const parsedData = JSON.parse(jsonString) as HumanSignData;
+        setData(parsedData);
+        await verifySignature(parsedData);
       }
-      toast.success("Analysis Loaded Successfully");
     } catch (e) {
-      toast.error("Invalid file format");
+      toast.error("Invalid file: " + (e as Error).message);
       setData(null);
+      setVerificationStatus("none");
+    }
+  };
+
+  const verifySignature = async (data: HumanSignData) => {
+    if (!data.signature?.public_key || !data.signature?.signature_value) {
+      setVerificationStatus("none");
+      return;
+    }
+    try {
+      const binaryDerString = atob(data.signature.public_key);
+      const binaryDer = new Uint8Array(binaryDerString.length);
+      for (let i = 0; i < binaryDerString.length; i++)
+        binaryDer[i] = binaryDerString.charCodeAt(i);
+
+      const publicKey = await window.crypto.subtle.importKey(
+        "spki",
+        binaryDer,
+        { name: "ECDSA", namedCurve: "P-256" },
+        true,
+        ["verify"],
+      );
+      const signatureBinaryString = atob(data.signature.signature_value);
+      const signature = new Uint8Array(signatureBinaryString.length);
+      for (let i = 0; i < signatureBinaryString.length; i++)
+        signature[i] = signatureBinaryString.charCodeAt(i);
+
+      const dataToVerify = JSON.stringify({
+        content_hash: data.content_hash,
+        metrics: data.metrics,
+        session_id: data.session.id,
+      });
+      const isValid = await window.crypto.subtle.verify(
+        { name: "ECDSA", hash: { name: "SHA-256" } },
+        publicKey,
+        signature,
+        new TextEncoder().encode(dataToVerify),
+      );
+
+      setVerificationStatus(isValid ? "valid" : "invalid");
+      if (isValid) toast.success("Signature verified");
+      else toast.error("Signature verification failed");
+    } catch {
+      setVerificationStatus("invalid");
     }
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
   }, []);
 
-  // --- Derived Metrics ---
-  const confusionMetrics = useMemo(() => {
-    if (!data) return [];
-    // Human, Paste, AI
-    // We prioritize volumes from metrics if available, else ratios
-    const total = data.metrics.text_length || 1;
-    const humanVol = data.metrics.total_typed_chars ?? (data.classification.human_ratio || 0) * total;
-    const pasteVol = data.metrics.total_pasted_chars ?? (data.classification.paste_ratio || 0) * total;
-    const aiVol = data.metrics.total_ai_chars ?? (data.classification.ai_ratio || 0) * total;
+  const verdict =
+    data?.classification?.verdict ||
+    data?.classification?.class_label ||
+    "unverified";
+  const isHuman = data?.classification?.is_human === true;
+  const confidence = (data?.classification?.confidence || 0) * 100;
 
-    // Normalize
-    const h = Math.round(humanVol);
-    const p = Math.round(pasteVol);
-    const a = Math.round(aiVol);
-    // If specific fields missing, fallback to assumption based on verdict? 
-    // Usually backend sends ratios. Let's trust what we have.
+  const getVerdictConfig = (v: string) => {
+    const configs: Record<
+      string,
+      { label: string; color: string; bg: string; border: string }
+    > = {
+      human_verified: {
+        label: "Human Verified",
+        color: "text-green-700",
+        bg: "bg-green-50",
+        border: "border-green-200",
+      },
+      human_organic: {
+        label: "Human Typing",
+        color: "text-green-700",
+        bg: "bg-green-50",
+        border: "border-green-200",
+      },
+      human: {
+        label: "Human",
+        color: "text-green-700",
+        bg: "bg-green-50",
+        border: "border-green-200",
+      },
+      ai_detected: {
+        label: "AI Detected",
+        color: "text-red-700",
+        bg: "bg-red-50",
+        border: "border-red-200",
+      },
+      ai_generated: {
+        label: "AI Generated",
+        color: "text-red-700",
+        bg: "bg-red-50",
+        border: "border-red-200",
+      },
+      paste: {
+        label: "Paste Detected",
+        color: "text-red-700",
+        bg: "bg-red-50",
+        border: "border-red-200",
+      },
+      paste_detected: {
+        label: "Paste Detected",
+        color: "text-red-700",
+        bg: "bg-red-50",
+        border: "border-red-200",
+      },
+      ai_assisted: {
+        label: "AI Assisted",
+        color: "text-amber-700",
+        bg: "bg-amber-50",
+        border: "border-amber-200",
+      },
+      mixed_signals: {
+        label: "Mixed Signals",
+        color: "text-amber-700",
+        bg: "bg-amber-50",
+        border: "border-amber-200",
+      },
+      unverified: {
+        label: "Unverified",
+        color: "text-slate-600",
+        bg: "bg-slate-50",
+        border: "border-slate-200",
+      },
+      unknown: {
+        label: "Unknown",
+        color: "text-slate-600",
+        bg: "bg-slate-50",
+        border: "border-slate-200",
+      },
+      waiting: {
+        label: "Analyzing",
+        color: "text-blue-600",
+        bg: "bg-blue-50",
+        border: "border-blue-200",
+      },
+    };
+    return configs[v] || configs.unverified;
+  };
 
-    return [
-      { name: "Typed", value: h, color: "#3b82f6" }, // Blue-500
-      { name: "Pasted", value: p, color: "#f59e0b" }, // Amber-500
-      { name: "AI", value: a, color: "#ef4444" },     // Red-500
-    ].filter(x => x.value > 0);
-  }, [data]);
+  const config = getVerdictConfig(verdict);
 
-  const dwellData = useMemo(() => {
-    return data?.timing_data.dwell_histogram.map((val, i) => ({ i, val })) || [];
-  }, [data]);
-
-  const flightData = useMemo(() => {
-    return data?.timing_data.flight_histogram.map((val, i) => ({ i, val })) || [];
-  }, [data]);
-
-
-  // Clean UI Placeholder
-  if (!data) {
-    return (
-      <main className="min-h-screen bg-slate-50 flex flex-col font-sans">
-        <Navigation />
-        <div className="flex-1 flex flex-col items-center justify-center p-8">
+  return (
+    <main className="min-h-screen bg-slate-50 flex flex-col">
+      <Navigation />
+      <div className="flex-1 p-8 max-w-5xl mx-auto w-full">
+        {!data ? (
           <div
             onDrop={onDrop}
-            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
             onDragLeave={() => setIsDragOver(false)}
             className={cn(
-              "w-full max-w-2xl border-2 border-dashed rounded-2xl h-[400px] flex flex-col items-center justify-center gap-6 transition-all duration-300",
-              isDragOver ? "border-blue-500 bg-blue-50 scale-[1.02]" : "border-slate-300 bg-white hover:border-slate-400"
+              "border-2 border-dashed rounded-xl h-[400px] flex flex-col items-center justify-center gap-6 transition-colors",
+              isDragOver
+                ? "border-blue-400 bg-blue-50"
+                : "border-slate-300 bg-white",
             )}
           >
-            <div className="h-20 w-20 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center">
-              <FileUp className="h-10 w-10" />
+            <div className="h-16 w-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-400">
+              <FileUp className="h-8 w-8" />
             </div>
-            <div className="text-center space-y-2">
-              <h3 className="text-2xl font-bold text-slate-900">Upload Verification File</h3>
-              <p className="text-slate-500">Drag & drop your .humanSign output here</p>
+            <div className="text-center">
+              <h3 className="font-semibold text-xl text-slate-900">
+                Upload HumanSign File
+              </h3>
+              <p className="text-slate-500 mt-1">
+                Drop your .zip or .humanSign file here
+              </p>
             </div>
-
-            <input type="file" id="file-upload" className="hidden" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-            <Button onClick={() => document.getElementById("file-upload")?.click()} size="lg" className="bg-slate-900 text-white hover:bg-slate-800">
+            <input
+              type="file"
+              id="file-upload"
+              className="hidden"
+              accept=".zip,.humanSign,.txt"
+              onChange={(e) =>
+                e.target.files?.[0] && handleFile(e.target.files[0])
+              }
+            />
+            <Button
+              variant="outline"
+              onClick={() => document.getElementById("file-upload")?.click()}
+            >
               Browse Files
             </Button>
           </div>
-        </div>
-        <Toaster />
-      </main>
-    );
-  }
-
-  // --- DASHBOARD UI ---
-  const isHuman = data.classification.is_human;
-  const confidencePct = (data.classification.confidence * 100).toFixed(1);
-  const totalScoreVal = isHuman ? confidencePct : (100 - parseFloat(confidencePct)).toFixed(1);
-  // If not human, confidence is confidence OF IT BEING AI. But usually user wants "Verification Score".
-  // Let's stick to system confidence.
-
-  return (
-    <main className="min-h-screen bg-slate-50 font-sans pb-20">
-      <Navigation />
-
-      <div className="max-w-7xl mx-auto px-6 pt-10 space-y-8">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">HumanSign Verification</h1>
-            <p className="text-slate-500 mt-1 flex items-center gap-2">
-              <FileText className="w-4 h-4" /> {fileName}
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <div className={cn("px-4 py-2 rounded-full font-semibold flex items-center gap-2", isHuman ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
-              {isHuman ? <ShieldCheck className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
-              {isHuman ? "Human Verified" : "Verification Failed"}
-            </div>
-          </div>
-        </div>
-
-        {/* 1. TOP METRICS ROW */}
-        <div className="grid grid-cols-5 gap-4">
-          <StatCard label="KEYSTROKES" value={data.metrics.total_keystrokes} icon={Keyboard} />
-          <StatCard label="TYPING SPEED" value={`${Math.round(data.metrics.wpm)} WPM`} icon={Zap} />
-          <StatCard label="AVG DWELL" value={`${Math.round(data.metrics.avg_dwell_ms)}ms`} icon={Clock} />
-          <StatCard label="AVG FLIGHT" value={`${Math.round(data.metrics.avg_flight_ms)}ms`} icon={Plane} />
-          <StatCard label="CHARACTERS" value={data.metrics.text_length} icon={FileText} />
-        </div>
-
-        {/* 2. MAIN CHARTS GRID */}
-        <div className="grid grid-cols-12 gap-6 h-[420px]">
-
-          {/* LEFT: Content Origin (Donut) */}
-          <Card className="col-span-4 p-6 flex flex-col justify-between shadow-sm border-slate-200">
-            <div>
-              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <PieChart className="w-5 h-5 text-indigo-500" />
-                Content Origin
-              </h3>
+        ) : (
+          <div className="space-y-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-2xl font-semibold text-slate-900">
+                  Verification Report
+                </h1>
+                <p className="text-slate-500 text-sm mt-0.5">{fileName}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setData(null);
+                  setDocumentContent("");
+                }}
+              >
+                New File
+              </Button>
             </div>
 
-            <div className="h-64 relative">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={confusionMetrics}
-                    innerRadius={60}
-                    outerRadius={85}
-                    paddingAngle={5}
-                    dataKey="value"
-                    stroke="none"
+            {/* Verdict Card */}
+            <Card className={cn("p-6 border-2", config.border, config.bg)}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div
+                    className={cn(
+                      "h-12 w-12 rounded-full flex items-center justify-center",
+                      isHuman ? "bg-green-100" : "bg-red-100",
+                    )}
                   >
-                    {confusionMetrics.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip />
-                </PieChart>
-              </ResponsiveContainer>
-              {/* Centered Percentage */}
-              <div className="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">
-                <span className="text-3xl font-bold text-slate-900">
-                  {((confusionMetrics.find(x => x.name === "Typed")?.value || 0) / data.metrics.text_length * 100).toFixed(0)}%
-                </span>
-                <span className="text-xs font-semibold text-slate-400 uppercase">Typed</span>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {confusionMetrics.map((item) => (
-                <div key={item.name} className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full" style={{ background: item.color }} />
-                    <span className="font-medium text-slate-700">{item.name}</span>
+                    {isHuman ? (
+                      <CheckCircle2 className="h-6 w-6 text-green-600" />
+                    ) : (
+                      <XCircle className="h-6 w-6 text-red-600" />
+                    )}
                   </div>
-                  <span className="font-bold text-slate-900">{item.value.toLocaleString()} chars</span>
+                  <div>
+                    <p className="text-sm text-slate-500">Classification</p>
+                    <p className={cn("text-xl font-semibold", config.color)}>
+                      {config.label}
+                    </p>
+                  </div>
                 </div>
-              ))}
+                <div className="text-right">
+                  <p className="text-sm text-slate-500">Confidence</p>
+                  <p className="text-3xl font-semibold text-slate-900">
+                    {confidence.toFixed(0)}%
+                  </p>
+                </div>
+              </div>
+              {/* Confidence bar */}
+              <div className="mt-4 h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div
+                  className={cn(
+                    "h-full rounded-full",
+                    isHuman ? "bg-green-500" : "bg-red-500",
+                  )}
+                  style={{ width: `${confidence}%` }}
+                />
+              </div>
+            </Card>
+
+            {/* Info Grid */}
+            <div className="grid grid-cols-2 gap-4">
+              <Card className="p-4 bg-white border border-slate-200">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={cn(
+                      "h-10 w-10 rounded-lg flex items-center justify-center",
+                      verificationStatus === "valid"
+                        ? "bg-green-100 text-green-600"
+                        : verificationStatus === "invalid"
+                          ? "bg-red-100 text-red-600"
+                          : "bg-slate-100 text-slate-400",
+                    )}
+                  >
+                    <Shield className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Signature</p>
+                    <p className="font-medium text-slate-900">
+                      {verificationStatus === "valid"
+                        ? "Valid"
+                        : verificationStatus === "invalid"
+                          ? "Invalid"
+                          : "Missing"}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4 bg-white border border-slate-200">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center">
+                    <Clock className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Duration</p>
+                    <p className="font-medium text-slate-900">
+                      {Math.round((data.session?.duration_ms || 0) / 1000)}s
+                    </p>
+                  </div>
+                </div>
+              </Card>
             </div>
-          </Card>
 
-          {/* RIGHT: Biometric Patterns (Histograms) */}
-          <Card className="col-span-8 p-6 flex flex-col shadow-sm border-slate-200">
-            <div className="mb-6">
-              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <Zap className="w-5 h-5 text-indigo-500" />
-                Biometric Typing Patterns
-              </h3>
+            {/* Metrics */}
+            <div className="grid grid-cols-5 gap-3">
+              <MetricCard
+                icon={Keyboard}
+                label="Keystrokes"
+                value={data.metrics.total_keystrokes.toLocaleString()}
+              />
+              <MetricCard icon={Zap} label="WPM" value={data.metrics.wpm} />
+              <MetricCard
+                icon={BarChart3}
+                label="Dwell"
+                value={`${data.metrics.avg_dwell_ms}ms`}
+              />
+              <MetricCard
+                icon={BarChart3}
+                label="Flight"
+                value={`${data.metrics.avg_flight_ms}ms`}
+              />
+              <MetricCard
+                icon={FileText}
+                label="Chars"
+                value={data.metrics.text_length.toLocaleString()}
+              />
             </div>
 
-            <div className="flex-1 grid grid-cols-2 gap-8">
-              {/* Dwell Chart */}
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-400 uppercase mb-2 block tracking-wider">Key Hold Duration (Dwell)</span>
-                <div className="flex-1 min-h-[180px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dwellData}>
-                      <Bar dataKey="val" fill="#6366f1" radius={[2, 2, 0, 0]} />
-                      <XAxis dataKey="i" hide />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* Flight Chart */}
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-400 uppercase mb-2 block tracking-wider">Key Flight Interval</span>
-                <div className="flex-1 min-h-[180px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={flightData}>
-                      <Bar dataKey="val" fill="#a855f7" radius={[2, 2, 0, 0]} />
-                      <XAxis dataKey="i" hide />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
+            {/* Histograms */}
+            <div className="grid grid-cols-2 gap-4">
+              <Histogram
+                title="Dwell Time"
+                data={data.timing_data?.dwell_histogram}
+              />
+              <Histogram
+                title="Flight Time"
+                data={data.timing_data?.flight_histogram}
+              />
             </div>
 
-            {/* Summary Stats Footer inside Card */}
-            <div className="mt-8 pt-6 border-t border-slate-100 grid grid-cols-3 gap-8">
-              <div>
-                <p className="text-xs font-bold text-indigo-600 uppercase mb-1">Pattern Match</p>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-slate-900">{isHuman ? confidencePct : (data.classification.confidence * 100).toFixed(1)}%</span>
-                  {isHuman && <ShieldCheck className="w-4 h-4 text-indigo-500" />}
+            {/* Document Preview */}
+            {documentContent && (
+              <Card className="p-4 bg-white border border-slate-200">
+                <p className="text-sm font-medium text-slate-700 mb-2">
+                  Document Preview
+                </p>
+                <div className="bg-slate-50 rounded-lg p-3 max-h-48 overflow-auto">
+                  <pre className="text-sm text-slate-600 whitespace-pre-wrap font-mono">
+                    {documentContent.slice(0, 1500)}
+                    {documentContent.length > 1500 && "..."}
+                  </pre>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">Similarity to human baseline model</p>
+              </Card>
+            )}
+
+            {/* Technical Details */}
+            <Card className="p-4 bg-white border border-slate-200">
+              <p className="text-sm font-medium text-slate-700 mb-3">
+                Technical Details
+              </p>
+              <div className="grid grid-cols-4 gap-4 text-sm">
+                <Detail label="Version" value={data.version} />
+                <Detail label="Domain" value={data.session?.domain} />
+                <Detail label="Algorithm" value={data.signature?.algorithm} />
+                <Detail
+                  label="Generated"
+                  value={new Date(data.generated_at).toLocaleDateString()}
+                />
               </div>
-
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase mb-1">System Verdict</p>
-                <div className="flex items-baseline gap-2">
-                  <span className={cn("text-2xl font-bold", isHuman ? "text-green-600" : "text-red-600")}>
-                    {isHuman ? "Human Verified" : "Flagged"}
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">Weighted final verification score</p>
-              </div>
-
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Total Events</p>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-slate-900">{data.metrics.total_keystrokes}</span>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">Total validated events captured</p>
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        {/* 3. FOOTER ACTIONS */}
-        <div className="flex justify-center pt-8">
-          <Button
-            onClick={() => setData(null)}
-            className="bg-slate-900 text-white hover:bg-slate-800 px-8 py-6 rounded-xl font-semibold shadow-lg shadow-slate-200 transition-all hover:scale-105"
-          >
-            Audit Another File
-          </Button>
-        </div>
-
+              <p className="text-xs text-slate-400 mt-3 font-mono truncate">
+                Hash: {data.content_hash}
+              </p>
+            </Card>
+          </div>
+        )}
       </div>
       <Toaster />
     </main>
   );
 }
 
-function StatCard({ label, value, icon: Icon }: { label: string; value: string | number; icon: any }) {
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string | number;
+}) {
   return (
-    <Card className="p-5 flex flex-col items-center justify-center gap-2 border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-      <span className="text-3xl font-bold text-slate-900">{value}</span>
-      <div className="flex items-center gap-2 text-slate-400 text-xs font-bold tracking-wider uppercase">
-        <Icon className="w-3 h-3" />
-        {label}
+    <Card className="p-3 bg-white border border-slate-200 text-center">
+      <Icon className="h-4 w-4 text-slate-400 mx-auto mb-1" />
+      <p className="text-lg font-semibold text-slate-900">{value}</p>
+      <p className="text-xs text-slate-500">{label}</p>
+    </Card>
+  );
+}
+
+function Histogram({ title, data }: { title: string; data: number[] }) {
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data, 1);
+  return (
+    <Card className="p-4 bg-white border border-slate-200">
+      <p className="text-sm font-medium text-slate-700 mb-3">{title}</p>
+      <div className="flex items-end h-20 gap-0.5">
+        {data.map((val, i) => (
+          <div
+            key={i}
+            className="flex-1 bg-slate-300 rounded-t hover:bg-slate-400 transition-colors"
+            style={{
+              height: `${(val / max) * 100}%`,
+              minHeight: val > 0 ? "2px" : "0",
+            }}
+            title={`${val} events`}
+          />
+        ))}
+      </div>
+      <div className="flex justify-between text-xs text-slate-400 mt-1">
+        <span>Fast</span>
+        <span>Slow</span>
       </div>
     </Card>
-  )
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-slate-500">{label}</p>
+      <p className="font-medium text-slate-900 truncate">{value}</p>
+    </div>
+  );
 }
