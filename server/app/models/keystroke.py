@@ -9,10 +9,11 @@ from pydantic import BaseModel, Field
 class KeystrokeEvent(BaseModel):
     """Single keystroke event from client."""
     
-    event_type: Literal["keydown", "keyup"]
-    key_code: int = Field(..., ge=0, le=255)
-    key_char: Optional[str] = Field(None, max_length=1)
+    event_type: Literal["keydown", "keyup", "paste", "ai_assistant"]
+    key_code: int = Field(..., ge=0, description="0 for paste/ai events")
+    key_char: Optional[str] = Field(None)
     client_timestamp: float = Field(..., ge=0, description="performance.now() value in ms")
+    input_method: Literal["keyboard", "paste", "ai_assistant"] = "keyboard"
 
 
 class KeystrokeBatchRequest(BaseModel):

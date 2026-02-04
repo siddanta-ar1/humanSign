@@ -88,6 +88,11 @@ def validate_onnx(onnx_path: Path, original_model) -> None:
     print(f"Predictions match: {pred_match}")
     print(f"Max probability difference: {proba_diff:.6f}")
     
+    print("\nSAMPLE OUTPUTS (First row):")
+    print(f"Original Proba: {original_proba[0]}")
+    print(f"ONNX Proba:     {onnx_proba[0]}")
+    print(f"ONNX Range:     Min={np.min(onnx_proba):.4f}, Max={np.max(onnx_proba):.4f}")
+    
     if pred_match and proba_diff < 0.01:
         print("✓ ONNX validation passed!")
     else:

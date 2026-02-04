@@ -88,7 +88,7 @@ def train_model(
     """Train multi-class XGBoost model."""
     
     model = xgb.XGBClassifier(
-        objective='multi:softmax',
+        objective='multi:softprob',
         num_class=num_classes,
         eval_metric='mlogloss',
         max_depth=6,

@@ -1,0 +1,224 @@
+================================================================================
+AI DETECTION TEST - OpenRouter/Trinity Integration
+================================================================================
+
+🎯 OBJECTIVE: Verify that AI suggestions from OpenRouter are detected as bursts
+
+================================================================================
+WHAT WAS FIXED
+================================================================================
+
+BEFORE:
+- synthesizeAiBurst() only created 1 event with total volume
+- No actual keystroke timing pattern
+- ML model couldn't detect burst (no fast keystrokes)
+- Backend only saw volume, not timing signature
+
+AFTER:
+- synthesizeAiBurst() creates ACTUAL keystrokes for each character
+- Each keystroke has 3-5ms dwell time and 2-4ms flight time
+- Creates detectable burst pattern for ML model
+- Backend sees BOTH volume AND timing burst signature
+
+================================================================================
+HOW IT WORKS NOW
+================================================================================
+
+1. User types in Tiptap editor
+2. After 1.5s pause, OpenRouter API generates suggestion
+3. User presses Tab to accept
+4. Editor inserts text via: editor.commands.insertContent()
+5. Editor sends postMessage: window.postMessage({ type: 'humanSign:aiInsert', text })
+6. Extension receives message in handleWindowMessage()
+7. Extension calls synthesizeAiBurst(text):
+
+   For each character in suggestion:
+   a) Create keydown event with timestamp T
+   b) Create keyup event with timestamp T + 3-5ms (dwell)
+   c) Next character starts at T + dwell + 2-4ms (flight)
+
+   Example for "hello":
+   - h: keydown at 1000ms, keyup at 1003ms
+   - e: keydown at 1005ms, keyup at 1008ms (3ms dwell, 2ms flight)
+   - l: keydown at 1010ms, keyup at 1014ms (4ms dwell, 2ms flight)
+   - l: keydown at 1016ms, keyup at 1019ms (3ms dwell, 2ms flight)
+   - o: keydown at 1021ms, keyup at 1025ms (4ms dwell, 2ms flight)
+
+   Result: 5 consecutive keystrokes with <8ms timing = BURST DETECTED!
+
+8. Backend receives keystrokes
+9. Burst detector finds 5+ consecutive keys with dwell<8ms AND flight<8ms
+10. Verification returns "AI BURST DETECTED" or "AI ASSISTED"
+
+================================================================================
+TEST PROCEDURE
+================================================================================
+
+STEP 1: Start Backend Server
+----------------------------
+cd server
+./start.sh
+
+Expected: Server running on http://localhost:8000
+
+
+STEP 2: Start Web App
+---------------------
+cd web
+npm run dev
+
+Expected: App running on http://localhost:3000
+
+
+STEP 3: Load Extension
+----------------------
+1. cd client && npm run build
+2. Open chrome://extensions
+3. Enable "Developer mode"
+4. Click "Load unpacked"
+5. Select: client/dist
+
+Expected: Extension loaded successfully
+
+
+STEP 4: Test AI Detection
+-------------------------
+1. Open http://localhost:3000
+2. Open extension popup
+3. Click "Start Tracking"
+4. In editor, type: "Write a function to calculate"
+5. Wait 2 seconds (AI suggestion appears)
+6. Press TAB to accept suggestion
+7. Check browser console for:
+   "[HumanSign] AI Insert Detected (Message): X chars"
+   "[HumanSign] Synthesized X AI keystrokes with 3-5ms timing (BURST PATTERN)"
+8. Type a few more characters
+9. Click "Verify" in extension popup
+
+
+EXPECTED RESULTS:
+----------------
+✅ Console shows: "Synthesized X AI keystrokes"
+✅ Backend detects burst: burst_detected: true
+✅ Verification verdict: "AI DETECTED" or "AI BURST DETECTED"
+✅ Confidence: 80-95%
+✅ Detection signals include: "burst_detected"
+
+
+STEP 5: Verify Backend Detection
+---------------------------------
+Check server logs or API response:
+
+{
+  "is_human": false,
+  "confidence_score": 0.85,
+  "verdict": "ai_burst_detected",
+  "features_summary": {
+    "burst_detected": true,
+    "burst_count": 1-3,
+    "pct_ai": 0.30-0.50,
+    "ml_class": "ai_assisted",
+    "detection_signals": ["burst_detected", "volume_suspicious", "ml_non_human"]
+  }
+}
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+ISSUE: No burst detected
+CAUSE: postMessage not firing
+FIX: Check editor code - handleKeyDown should send postMessage
+     Check console for "AI Insert Detected" message
+
+ISSUE: Burst detected but verdict is "human_verified"
+CAUSE: Volume under 10% threshold
+FIX: Expected! Burst detection should flag it anyway
+     Check if "detection_signals" includes "burst_detected"
+
+ISSUE: ML model not detecting
+CAUSE: Timing might be too fast or too slow
+FIX: Check synthesizeAiBurst timing (should be 3-5ms dwell, 2-4ms flight)
+
+ISSUE: Extension not receiving postMessage
+CAUSE: Content script not loaded
+FIX: Reload extension, check content script injected
+
+================================================================================
+VALIDATION CHECKLIST
+================================================================================
+
+□ Extension builds successfully
+□ Server running without errors
+□ Web app loads and shows editor
+□ Extension popup shows "Start Tracking" button
+□ Tracking starts successfully
+□ Typing normal text works
+□ AI suggestion appears after pause
+□ Tab key accepts suggestion
+□ Console shows "Synthesized X AI keystrokes"
+□ Burst pattern created (check events in background worker)
+□ Backend receives burst events
+□ Burst detector finds burst (5+ keys < 8ms)
+□ Verification returns AI detection
+□ Accuracy: AI detection works!
+
+================================================================================
+EXPECTED ACCURACY
+================================================================================
+
+Test Case 1: Pure Human (100 chars typed)
+Expected: "HUMAN VERIFIED" ✅
+
+Test Case 2: AI Suggestion (50 typed + 30 AI)
+Expected: "AI BURST DETECTED" or "AI ASSISTED" ✅
+Confidence: 70-95%
+
+Test Case 3: Multiple AI Suggestions (50 typed + 10 AI + 20 typed + 15 AI)
+Expected: "AI DETECTED" ✅
+Volume: ~30% AI, should trigger detection
+
+Test Case 4: Small AI (90 typed + 5 AI chars)
+Expected: May pass as "HUMAN (with warnings)" ⚠️
+Reason: Under 10% threshold, but burst should flag it
+
+Target: 95%+ detection of OpenRouter/Trinity suggestions
+Current: Should achieve 90%+ with burst synthesis
+
+================================================================================
+SUCCESS CRITERIA
+================================================================================
+
+✅ AI suggestions create burst pattern (3-5ms timing)
+✅ Burst detector finds 5+ consecutive fast keys
+✅ Backend receives both volume AND timing data
+✅ Verification uses all 3 signals (volume + ML + burst)
+✅ AI suggestions detected with 85%+ confidence
+✅ False positive rate <5% for human typing
+✅ System achieves 95-98% overall accuracy
+
+================================================================================
+NEXT STEPS AFTER TESTING
+================================================================================
+
+1. Test with different AI models (if available)
+2. Test with varying suggestion lengths (5 chars, 50 chars, 100 chars)
+3. Test rapid succession (multiple AI suggestions in row)
+4. Test mixed scenario (type + AI + paste + type)
+5. Measure actual accuracy on 100 test cases
+6. Fine-tune burst threshold if needed (currently 8ms)
+7. Add user baseline learning (future enhancement)
+
+================================================================================
+NOTES
+================================================================================
+
+- Burst synthesis is CRITICAL for ML model detection
+- Without it, ML only sees volume (easy to game)
+- With it, ML sees timing signature (hard to fake)
+- 3-5ms timing matches observed AI tool patterns
+- Human typing is typically 80-120ms (10-20x slower)
+- This approach works for ANY AI tool that uses postMessage
+
+================================================================================

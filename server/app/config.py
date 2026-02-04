@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "change-this-in-production"
     cors_origins: list[str] = ["http://localhost:3000"]
+    jwt_secret_key: str = "jwt-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+
+    # Blockchain
+    polygon_rpc_url: str = "https://rpc-amoy.polygon.technology/"
     
     # Keystroke Processing
     max_batch_size: int = 100

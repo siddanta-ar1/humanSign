@@ -10,7 +10,7 @@ import type {
     KeystrokeBatchResponse,
 } from '../types';
 
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+const API_BASE_URL = 'http://localhost:8002/api/v1';
 const TIMEOUT_MS = 10000;
 
 /**
@@ -104,6 +104,7 @@ export interface CombinedVerificationResult {
     is_human: boolean;
     confidence_score: number;
     verdict: string;
+    feedback?: string;
     keystroke_analysis: {
         is_human?: boolean;
         confidence?: number;
@@ -127,13 +128,17 @@ export interface CombinedVerificationResult {
 
 export async function verifyCombined(
     sessionId: string,
-    textContent: string
+    textContent: string,
+    pasteCount: number = 0,
+    pasteRatio: number = 0
 ): Promise<CombinedVerificationResult> {
     return apiRequest<CombinedVerificationResult>('/verify/combined', {
         method: 'POST',
         body: JSON.stringify({
             session_id: sessionId,
             text_content: textContent,
+            paste_count: pasteCount,
+            paste_ratio: pasteRatio,
         }),
     });
 }

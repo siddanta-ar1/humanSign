@@ -2,10 +2,11 @@
  * Keystroke event as captured from the DOM.
  */
 export interface KeystrokeEvent {
-    event_type: 'keydown' | 'keyup';
+    event_type: 'keydown' | 'keyup' | 'paste' | 'ai_assistant'; // Added deterministic types
     key_code: number;
     key_char: string | null;
-    client_timestamp: number; // performance.now() value
+    client_timestamp: number;
+    input_method?: 'keyboard' | 'paste' | 'ai_assistant'; // Source tagging
 }
 
 /**
@@ -46,6 +47,7 @@ export interface VerificationResult {
     confidence_score: number;
     features_summary: Record<string, number>;
     computed_at: string;
+    feedback?: string;
 }
 
 /**

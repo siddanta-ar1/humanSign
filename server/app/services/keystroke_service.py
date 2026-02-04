@@ -29,7 +29,15 @@ class KeystrokeService:
         
         for i, event in enumerate(batch.events):
             sequence_num = base_sequence + i
-            event_type = 1 if event.event_type == "keydown" else 2
+            
+            # DETERMINISTIC TAGGING MAPPING
+            # 1=keydown, 2=keyup, 3=paste, 4=ai_assistant
+            if event.input_method == 'paste':
+                event_type = 3
+            elif event.input_method == 'ai_assistant':
+                event_type = 4
+            else:
+                event_type = 1 if event.event_type == "keydown" else 2
             
             dwell_time: Optional[float] = None
             flight_time: Optional[float] = None

@@ -89,6 +89,49 @@ def generate_organic_human(n_samples: int, seed: int = 42) -> List[KeystrokeSess
     return sessions
 
 
+def generate_fast_human(n_samples: int, seed: int = 42) -> List[KeystrokeSession]:
+    """
+    Generate fast human typing patterns (Pro/Gamer/Fast Typist).
+    
+    Characteristics:
+    - Faster dwell times (~70ms)
+    - Short flight times (~40ms), often overlapping (rollover)
+    - Higher burst count, but consistent variance
+    """
+    np.random.seed(seed)
+    sessions = []
+    
+    for i in range(n_samples):
+        n_keys = np.random.randint(100, 400)
+        
+        # Fast typing: shorter dwell
+        dwell = np.random.normal(70, 15, n_keys)
+        dwell = np.clip(dwell, 15, 150)
+        
+        # Fast flight (rollover typing)
+        flight = np.random.normal(40, 20, n_keys - 1)
+        flight = np.clip(flight, 5, 150) # Minimum 5ms to avoid 0ms (paste)
+        
+        # Occasional micro-pauses (thinking)
+        pause_mask = np.random.random(len(flight)) < 0.02
+        flight[pause_mask] = np.random.uniform(300, 1000, pause_mask.sum())
+        
+        key_codes = np.random.choice(
+            list(range(65, 91)) + list(range(48, 58)) + [32] * 12 + [8] * 2,
+            n_keys
+        )
+        
+        sessions.append(KeystrokeSession(
+            dwell_times=dwell,
+            flight_times=flight,
+            key_codes=key_codes,
+            pause_positions=np.where(pause_mask)[0],
+            label='human_organic' # Improve robustness of organic class
+        ))
+    
+    return sessions
+
+
 def generate_paste(n_samples: int, seed: int = 42) -> List[KeystrokeSession]:
     """
     Generate paste event patterns.
@@ -484,8 +527,23 @@ def generate_all_classes(
     
     for class_name, n_samples in samples_per_class.items():
         print(f"Generating {n_samples} samples for '{class_name}'...")
-        generator = generators[class_name]
-        sessions = generator(n_samples, seed=seed + hash(class_name) % 1000)
+        
+        if class_name == 'human_organic':
+            # Mix standard (60%) and fast (40%) profiles for robustness
+            n_standard = int(n_samples * 0.6)
+            n_fast = n_samples - n_standard
+            
+            print(f"  - {n_standard} Standard Human")
+            print(f"  - {n_fast} Fast Human (Robustness)")
+            
+            gen_standard = generators[class_name]
+            sessions_std = gen_standard(n_standard, seed=seed)
+            sessions_fast = generate_fast_human(n_fast, seed=seed + 1)
+            sessions = sessions_std + sessions_fast
+        else:
+            generator = generators[class_name]
+            sessions = generator(n_samples, seed=seed + hash(class_name) % 1000)
+            
         all_sessions.extend(sessions)
     
     print(f"\nTotal sessions generated: {len(all_sessions)}")

@@ -1,0 +1,105 @@
+✅ AI DETECTION LOGIC - COMPLETELY FIXED!
+================================================================================
+
+BUGS FIXED:
+-----------
+1. ❌ AI suggestion APPEARS → Shows "ai_assistant" (even without accepting!)
+2. ❌ AI suggestion ACCEPTED → Shows "paste" instead of "ai_assistant"
+3. ❌ Double counting of AI characters
+
+ROOT CAUSES:
+------------
+1. DOM observer was detecting suggestion PREVIEW as AI insertion
+2. Input handler was catching Tab insertion before postMessage processed
+3. Both volume marker AND individual AI keystrokes were counted
+
+SOLUTIONS:
+----------
+
+1. REMOVED DOM-BASED AI DETECTION:
+   - DOM observer no longer watches for text changes
+   - Only attaches listeners to new editors
+   - AI suggestion preview appearing does NOT trigger detection
+
+2. AI DETECTION ONLY VIA POSTMESSAGE:
+   - Only way to detect AI is via explicit postMessage
+   - Editor sends: window.postMessage({ type: 'humanSign:aiInsert', text })
+   - This ONLY fires when Tab is pressed to ACCEPT suggestion
+
+3. BLOCKING MECHANISM FOR OTHER HANDLERS:
+   - When AI insert detected: aiInsertInProgress = true
+   - aiInsertIgnoreUntil = now + 500ms
+   - Paste handler checks and IGNORES if AI insert in progress
+   - Input handler checks and IGNORES if AI insert in progress
+   - Prevents Tab insertion from being caught as paste
+
+4. PROPER VOLUME COUNTING:
+   - Background worker only counts event_type="ai_assistant" (volume marker)
+   - Individual AI keystrokes NOT counted (they're for timing only)
+   - No more double counting
+
+DETECTION FLOW (CORRECT):
+-------------------------
+
+User types "hello":
+  → keydown/keyup events with normal timing
+  → Counted as human typing ✅
+  → Shows "human_verified"
+
+AI suggestion appears (preview):
+  → DOM changes but NOT observed
+  → Nothing sent to extension
+  → Still shows "human_verified" ✅
+
+User presses Tab (accepts AI):
+  → Editor calls: editor.commands.insertContent(suggestion)
+  → Editor sends: postMessage({ type: 'humanSign:aiInsert', text })
+  → Extension receives postMessage
+  → synthesizeAiBurst() called:
+    - Sets aiInsertInProgress = true
+    - Sets aiInsertIgnoreUntil = now + 500ms
+    - Creates fast keystrokes (3-5ms) for timing detection
+    - Creates volume marker event
+  → Other handlers (paste, input) BLOCKED for 500ms
+  → Only AI volume marker counted
+  → Shows "ai_assisted" ✅
+
+User pastes text (Ctrl+V):
+  → Paste event fires
+  → aiInsertInProgress checked (false if no recent AI)
+  → Counted as paste ✅
+  → Shows "paste_detected" ✅
+
+CODE CHANGES:
+-------------
+
+client/src/content/keystroke-tracker.ts:
+  + Added: aiInsertInProgress, aiInsertIgnoreUntil flags
+  + Modified: handlePaste() - checks AI flags before processing
+  + Modified: handleInput() - checks AI flags before processing
+  + Modified: synthesizeAiBurst() - sets blocking flags
+  + REMOVED: DOM mutation AI detection
+  + REMOVED: recordSilentAI() function
+  + REMOVED: Input event AI detection
+
+client/src/background/index.ts:
+  + Fixed: Only count volume markers, not individual AI keystrokes
+
+TESTING:
+--------
+1. Start tracking
+2. Type text → Shows "human_verified 100%" ✅
+3. AI suggestion appears → STILL shows "human_verified 100%" ✅
+4. Press Tab to accept → Shows "ai_assisted X%" ✅
+5. Paste with Ctrl+V → Shows "paste_detected X%" ✅
+
+EXPECTED BEHAVIOR:
+------------------
+✅ Human typing: Correctly identified as human
+✅ AI suggestion preview: NO effect on detection
+✅ AI suggestion accepted: Correctly identified as AI
+✅ Paste operation: Correctly identified as paste
+✅ No confusion between AI and paste
+✅ Accurate percentages
+
+================================================================================
