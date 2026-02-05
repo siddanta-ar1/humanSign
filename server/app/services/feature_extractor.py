@@ -168,7 +168,36 @@ class FeatureExtractor:
         # Extra metrics (Not used in model, but good for UI)
         features["avg_wpm"] = self._compute_wpm(len(key_codes), duration_ms)
 
+        # Histograms for UI (Normalized 0-100 for easy CSS rendering)
+        features["dwell_histogram"] = self._compute_histogram(dwells_pos, 20, 0, 200)
+        features["flight_histogram"] = self._compute_histogram(flights_pos, 20, 0, 300)
+
         return features
+
+    def _compute_histogram(
+        self, values: np.ndarray, bins: int = 20, min_val: float = 0, max_val: float = 200
+    ) -> list[int]:
+        """
+        Compute a normalized histogram (0-100) for UI visualization.
+        Returns a list of integer heights (0-100).
+        """
+        if len(values) == 0:
+            return [0] * bins
+
+        # Clip values to range
+        clipped = np.clip(values, min_val, max_val)
+
+        # Compute histogram
+        hist, _ = np.histogram(clipped, bins=bins, range=(min_val, max_val))
+
+        # Normalize to 0-100 height relative to the max bin
+        # (This makes the tallest bar always 100% height, maximizing visual usage)
+        max_height = np.max(hist)
+        if max_height == 0:
+            return [0] * bins
+
+        normalized = (hist / max_height) * 100
+        return [int(v) for v in normalized]
 
     def _compute_bursts(self, flight_times: np.ndarray) -> float:
         """Compute number of burst sequences (consecutive fast typing)."""

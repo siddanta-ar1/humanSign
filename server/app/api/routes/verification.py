@@ -51,7 +51,7 @@ class VerificationResult(BaseModel):
     session_id: UUID
     is_human: bool
     confidence_score: float
-    features_summary: dict[str, float]
+    features_summary: dict[str, Any]
     computed_at: datetime
     feedback: str | None = None
 

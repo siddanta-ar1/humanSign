@@ -383,7 +383,14 @@ class PopupController {
         }
         await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
       } else {
-        // Start recording - first start in background
+        // Start recording - FIRST reset any stale state
+        try {
+          await chrome.runtime.sendMessage({ type: "RESET_SESSION" });
+        } catch {
+          // Reset might fail if no previous session, that's ok
+        }
+
+        // Now start fresh session in background
         await chrome.runtime.sendMessage({
           type: "START_SESSION",
           payload: { domain: new URL(tab.url || "").hostname },

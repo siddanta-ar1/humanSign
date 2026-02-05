@@ -7,35 +7,15 @@ import {
     DialogHeader,
     DialogTitle,
     DialogDescription,
-    DialogFooter
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import {
-    ShieldCheck,
-    ShieldAlert,
-    Loader2,
-    Info,
-    Download,
-    HelpCircle,
-    CheckCircle2,
-    AlertTriangle,
-    XCircle,
-    Copy
-} from 'lucide-react';
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipProvider,
-    TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { ShieldCheck, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-interface VerificationResult {
-    is_human: boolean;
-    confidence_score: number;
-    feedback: string;
-    features_summary: any;
-}
+// New Components
+import { MetricsCards } from './metrics-cards';
+import { ContentOriginChart } from './content-origin-chart';
+import { BiometricPatternsChart } from './biometric-patterns-chart';
 
 interface VerificationModalProps {
     isOpen: boolean;
@@ -45,7 +25,8 @@ interface VerificationModalProps {
 
 export function VerificationModal({ isOpen, onClose, sessionId }: VerificationModalProps) {
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [result, setResult] = useState<VerificationResult | null>(null);
+    // Use 'any' to accommodate dynamic backend response structure
+    const [result, setResult] = useState<any | null>(null);
 
     const runVerification = async () => {
         if (!sessionId) {
@@ -66,13 +47,9 @@ export function VerificationModal({ isOpen, onClose, sessionId }: VerificationMo
 
             if (!res.ok) {
                 const err = await res.json();
-                // Special handling for 400 Bad Request (Insufficient keystrokes)
                 if (res.status === 400) {
-                    setResult({
-                        is_human: false,
-                        confidence_score: 0,
-                        feedback: "Insufficient Data: Please type at least 100 words.",
-                        features_summary: {}
+                    toast.warning("Insufficient Data", {
+                        description: "Please type a bit more for accurate verification."
                     });
                     return;
                 }
@@ -89,116 +66,73 @@ export function VerificationModal({ isOpen, onClose, sessionId }: VerificationMo
         }
     };
 
-    // Auto-run on open
-    // useEffect(() => {
-    //    if (isOpen && sessionId) runVerification();
-    // }, [isOpen]);
+    const features = result?.features_summary || {};
 
     return (
         <Dialog open={isOpen} onOpenChange={onClose}>
-            <DialogContent className="sm:max-w-md">
-                <DialogHeader>
+            <DialogContent className="max-w-5xl h-[85vh] p-0 overflow-hidden flex flex-col bg-[#F9FAFB]">
+                {/* Header */}
+                <DialogHeader className="px-6 py-4 border-b bg-white">
                     <div className="flex items-center justify-between">
-                        <DialogTitle className="flex items-center gap-2">
-                            <ShieldCheck className="w-5 h-5 text-blue-600" />
-                            Document Verification
+                        <DialogTitle className="flex items-center gap-2 text-xl">
+                            <ShieldCheck className="w-6 h-6 text-blue-600" />
+                            Verification Analysis
                         </DialogTitle>
-                        <TooltipProvider>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-6 w-6">
-                                        <HelpCircle className="w-4 h-4 text-slate-400" />
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs p-4 bg-slate-900 text-slate-50 border-none shadow-xl" side="left">
-                                    <div className="space-y-3 text-xs">
-                                        <p className="font-semibold text-sm border-b border-slate-700 pb-2">Classification Guide</p>
-
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2 text-green-400 font-medium">
-                                                <CheckCircle2 className="w-3 h-3" /> Human Written
-                                            </div>
-                                            <p className="text-slate-400 pl-5">Natural typing rhythm with normal variations in speed and pauses.</p>
-                                        </div>
-
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2 text-yellow-400 font-medium">
-                                                <AlertTriangle className="w-3 h-3" /> AI Assisted
-                                            </div>
-                                            <p className="text-slate-400 pl-5">Mostly human typing but shows patterns of transcribing or heavy editing of generated text.</p>
-                                        </div>
-
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2 text-red-400 font-medium">
-                                                <Copy className="w-3 h-3" /> Pasted / Copied
-                                            </div>
-                                            <p className="text-slate-400 pl-5">Large blocks of text inserted instantly or non-human typing speeds.</p>
-                                        </div>
-                                    </div>
-                                </TooltipContent>
-                            </Tooltip>
-                        </TooltipProvider>
                     </div>
-                    <DialogDescription>
-                        Analyze typing patterns to verify authorship.
+                    <DialogDescription className="hidden">
+                        Verification Dashboard
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="py-6 flex flex-col items-center justify-center min-h-[140px]">
+                {/* Main Content Area */}
+                <div className="flex-1 overflow-y-auto p-6">
                     {isAnalyzing ? (
-                        <div className="flex flex-col items-center gap-3">
-                            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-                            <p className="text-sm text-slate-500">Analyzing keystroke dynamics...</p>
+                        <div className="h-full flex flex-col items-center justify-center gap-4">
+                            <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
+                            <p className="text-slate-500 font-medium">Analyzing keystroke dynamics & biometric patterns...</p>
                         </div>
                     ) : result ? (
-                        <div className="w-full text-center space-y-4">
-                            <div className={`
-                                mx-auto w-16 h-16 rounded-full flex items-center justify-center
-                                ${result.is_human
-                                    ? 'bg-green-100 text-green-600'
-                                    : 'bg-amber-100 text-amber-600'}
-                            `}>
-                                {result.is_human
-                                    ? <ShieldCheck className="w-8 h-8" />
-                                    : <ShieldAlert className="w-8 h-8" />
-                                }
-                            </div>
+                        <div className="space-y-6">
+                            {/* 1. Metrics Cards Row */}
+                            <MetricsCards
+                                keystrokes={features.total_keystrokes || 0}
+                                wpm={features.avg_wpm || 0}
+                                avgDwell={features.avg_dwell_time || 0}
+                                avgFlight={features.avg_flight_time || 0}
+                                chars={features.total_keystrokes || 0} // Fallback if chars different
+                            />
 
-                            <div>
-                                <h3 className="text-lg font-semibold text-slate-800">
-                                    {result.feedback || (result.is_human ? "Verified Human Written" : "Verification Failed")}
-                                </h3>
-                                <p className="text-sm text-slate-500 mt-1">
-                                    Confidence: {Math.round(result.confidence_score * 100)}%
-                                </p>
-                            </div>
+                            {/* 2. Charts Grid */}
+                            <div className="grid grid-cols-3 gap-6 h-[400px]">
+                                {/* Content Origin - 1 Column */}
+                                <ContentOriginChart
+                                    typed={features.volume_human || 0}
+                                    pasted={features.volume_paste || 0}
+                                    ai={features.volume_ai || 0}
+                                />
 
-                            {!result.is_human && (
-                                <div className="bg-slate-50 p-3 rounded-lg text-xs text-slate-600 text-left flex gap-2">
-                                    <Info className="w-4 h-4 shrink-0 text-slate-400" />
-                                    <span>
-                                        To ensure accuracy, the system requires a substantial amount of continuous typing.
-                                        Pasting text or using AI assistance will lower the confidence score.
-                                    </span>
-                                </div>
-                            )}
+                                {/* Biometric Patterns - 2 Columns */}
+                                <BiometricPatternsChart
+                                    dwellHistogram={features.dwell_histogram || []}
+                                    flightHistogram={features.flight_histogram || []}
+                                />
+                            </div>
                         </div>
                     ) : (
-                        <div className="text-center">
-                            <Button onClick={runVerification} size="lg" className="w-full">
-                                Run Verification
+                        <div className="h-full flex flex-col items-center justify-center gap-6">
+                            <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mb-2">
+                                <ShieldCheck className="w-12 h-12 text-blue-500" />
+                            </div>
+                            <h3 className="text-xl font-semibold text-slate-800">Ready to Verify</h3>
+                            <p className="text-slate-500 max-w-sm text-center">
+                                Analyze your typing patterns to generate a comprehensive biometric report.
+                            </p>
+                            <Button onClick={runVerification} size="lg" className="px-8 mt-4 bg-blue-600 hover:bg-blue-700">
+                                Run Full Analysis
                             </Button>
                         </div>
                     )}
                 </div>
-
-                <DialogFooter className="sm:justify-start">
-                    {result?.is_human && (
-                        <Button className="w-full bg-green-600 hover:bg-green-700">
-                            Download Certificate
-                        </Button>
-                    )}
-                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

@@ -9,14 +9,13 @@ import {
   CheckCircle2,
   XCircle,
   Shield,
-  FileText,
   Clock,
-  Keyboard,
-  Zap,
-  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import JSZip from "jszip";
+import { MetricsCards } from "@/components/verification/metrics-cards";
+import { ContentOriginChart } from "@/components/verification/content-origin-chart";
+import { BiometricPatternsChart } from "@/components/verification/biometric-patterns-chart";
 
 interface HumanSignData {
   version: string;
@@ -403,41 +402,27 @@ export default function DecoderPage() {
               </Card>
             </div>
 
-            {/* Metrics */}
-            <div className="grid grid-cols-5 gap-3">
-              <MetricCard
-                icon={Keyboard}
-                label="Keystrokes"
-                value={data.metrics.total_keystrokes.toLocaleString()}
+            {/* Metrics & Charts */}
+            <div className="space-y-6">
+              <MetricsCards
+                keystrokes={data.metrics.total_keystrokes}
+                wpm={data.metrics.wpm}
+                avgDwell={data.metrics.avg_dwell_ms}
+                avgFlight={data.metrics.avg_flight_ms}
+                chars={data.metrics.text_length}
               />
-              <MetricCard icon={Zap} label="WPM" value={data.metrics.wpm} />
-              <MetricCard
-                icon={BarChart3}
-                label="Dwell"
-                value={`${data.metrics.avg_dwell_ms}ms`}
-              />
-              <MetricCard
-                icon={BarChart3}
-                label="Flight"
-                value={`${data.metrics.avg_flight_ms}ms`}
-              />
-              <MetricCard
-                icon={FileText}
-                label="Chars"
-                value={data.metrics.text_length.toLocaleString()}
-              />
-            </div>
 
-            {/* Histograms */}
-            <div className="grid grid-cols-2 gap-4">
-              <Histogram
-                title="Dwell Time"
-                data={data.timing_data?.dwell_histogram}
-              />
-              <Histogram
-                title="Flight Time"
-                data={data.timing_data?.flight_histogram}
-              />
+              <div className="grid grid-cols-3 gap-6 h-[400px]">
+                <ContentOriginChart
+                  typed={data.metrics.total_typed_chars || data.metrics.text_length}
+                  pasted={data.metrics.total_pasted_chars || 0}
+                  ai={data.metrics.total_ai_chars || 0}
+                />
+                <BiometricPatternsChart
+                  dwellHistogram={data.timing_data?.dwell_histogram || []}
+                  flightHistogram={data.timing_data?.flight_histogram || []}
+                />
+              </div>
             </div>
 
             {/* Document Preview */}
@@ -481,50 +466,6 @@ export default function DecoderPage() {
   );
 }
 
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string | number;
-}) {
-  return (
-    <Card className="p-3 bg-white border border-slate-200 text-center">
-      <Icon className="h-4 w-4 text-slate-400 mx-auto mb-1" />
-      <p className="text-lg font-semibold text-slate-900">{value}</p>
-      <p className="text-xs text-slate-500">{label}</p>
-    </Card>
-  );
-}
-
-function Histogram({ title, data }: { title: string; data: number[] }) {
-  if (!data || data.length === 0) return null;
-  const max = Math.max(...data, 1);
-  return (
-    <Card className="p-4 bg-white border border-slate-200">
-      <p className="text-sm font-medium text-slate-700 mb-3">{title}</p>
-      <div className="flex items-end h-20 gap-0.5">
-        {data.map((val, i) => (
-          <div
-            key={i}
-            className="flex-1 bg-slate-300 rounded-t hover:bg-slate-400 transition-colors"
-            style={{
-              height: `${(val / max) * 100}%`,
-              minHeight: val > 0 ? "2px" : "0",
-            }}
-            title={`${val} events`}
-          />
-        ))}
-      </div>
-      <div className="flex justify-between text-xs text-slate-400 mt-1">
-        <span>Fast</span>
-        <span>Slow</span>
-      </div>
-    </Card>
-  );
-}
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (

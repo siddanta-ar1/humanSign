@@ -7,31 +7,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 export function CodeEditor() {
-    const [code, setCode] = useState(`// Programiz Replica - JavaScript Compiler
-
-// Function to check if a number is prime
-function checkPrime(number) {
-    if (number <= 1) {
-        return false;
-    } else {
-        for (let i = 2; i < number; i++) {
-            if (number % i == 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-}
-
-// Test the function
-const num = 17;
-if (checkPrime(num)) {
-    console.log(num + " is a prime number.");
-} else {
-    console.log(num + " is not a prime number.");
-}
-
-console.log("HumanSign Verification Ready.");
+    const [code, setCode] = useState(`// Write your JavaScript code here...
 `);
 
     const [output, setOutput] = useState('');

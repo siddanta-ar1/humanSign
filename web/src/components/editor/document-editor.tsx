@@ -162,10 +162,7 @@ export function DocumentEditor() {
       // Clear suggestion if user types
       if (suggestion) setSuggestion("");
     },
-    content: `
-            <h1>Untitled Document</h1>
-            <p>Start writing your content here. The HumanSign extension will track your typing patterns to verify authenticity.</p>
-        `,
+    content: ``,
   });
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

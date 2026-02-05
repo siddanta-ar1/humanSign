@@ -57,6 +57,14 @@ const state: SessionState = {
 const restoreState = async () => {
   try {
     const stored = await chrome.storage.session.get("sessionState");
+    // CRITICAL GUARD: If session ID is already set (by START_SESSION), DO NOT overwrite it
+    if (state.sessionId) {
+      console.log(
+        "[HumanSign Background] Skipping restore - session already active:",
+        state.sessionId,
+      );
+      return;
+    }
     if (stored.sessionState) {
       const s = stored.sessionState;
       state.sessionId = s.sessionId;
@@ -88,7 +96,8 @@ const saveState = async () => {
   }
 };
 
-restoreState();
+// restoreState(); // REMOVED: Top-level call causes race condition with START_SESSION
+
 
 // Calculate stats from keystrokes
 function calculateStats() {
@@ -214,7 +223,7 @@ function calculateStats() {
  */
 chrome.runtime.onMessage.addListener(
   (
-    message: ExtensionMessage | { type: string; [key: string]: unknown },
+    message: ExtensionMessage | { type: string;[key: string]: unknown },
     _sender: chrome.runtime.MessageSender,
     sendResponse: (response: ExtensionResponse | unknown) => void,
   ): boolean => {
@@ -243,36 +252,49 @@ chrome.runtime.onMessage.addListener(
  * Process incoming message.
  */
 async function handleMessage(
-  message: ExtensionMessage | { type: string; [key: string]: unknown },
+  message: ExtensionMessage | { type: string;[key: string]: unknown },
 ): Promise<ExtensionResponse | unknown> {
   switch (message.type) {
     case "START_SESSION": {
       const payload = (message as ExtensionMessage).payload as {
         domain: string;
       };
+
+      // CRITICAL: Reset ALL state for fresh session
+      // This fixes the issue where second test fails due to stale state
+      const resetState = () => {
+        state.keystrokes = [];
+        state.pasteEvents = [];
+        state.totalTypedChars = 0;
+        state.totalPastedChars = 0;
+        state.totalAiChars = 0;
+        state.lastVerification = null;
+        state.signatureCount = 0;
+      };
+
       try {
         const session = await startSession(payload.domain);
+        resetState();
         state.sessionId = session.id;
         state.domain = payload.domain;
         state.startTime = Date.now();
         state.isRecording = true;
-        state.keystrokes = [];
-        state.pasteEvents = [];
-        state.totalTypedChars = 0;
-        state.totalPastedChars = 0;
         await saveState();
+        console.log("[HumanSign Background] New session started:", session.id);
         return { success: true, data: session };
-      } catch {
+      } catch (error) {
         // Fallback: create local session
+        resetState();
         state.sessionId = crypto.randomUUID();
         state.domain = payload.domain;
         state.startTime = Date.now();
         state.isRecording = true;
-        state.keystrokes = [];
-        state.pasteEvents = [];
-        state.totalTypedChars = 0;
-        state.totalPastedChars = 0;
         await saveState();
+        console.log(
+          "[HumanSign Background] Local session started:",
+          state.sessionId,
+          "(server unavailable)",
+        );
         return { success: true, data: { id: state.sessionId } };
       }
     }
@@ -299,6 +321,16 @@ async function handleMessage(
           events: KeystrokeEvent[];
           batch_sequence: number;
         };
+
+        // CRITICAL GUARD: Reject events from stale sessions
+        if (state.sessionId && batch.session_id !== state.sessionId) {
+          console.warn(
+            `[HumanSign Background] Rejected stale batch. Current: ${state.sessionId}, Received: ${batch.session_id}`,
+          );
+          // Return success to stop client from retrying endlessly, but do not process
+          return { success: true, data: { rejected: true, reason: "stale_session" } };
+        }
+
         state.keystrokes.push(...batch.events);
 
         // Track typed vs AI vs paste characters in real-time
@@ -569,6 +601,36 @@ async function handleMessage(
 
     case "STOP_RECORDING": {
       state.isRecording = false;
+      await saveState();
+      console.log("[HumanSign Background] Recording stopped");
+      return { success: true };
+    }
+
+    case "RESET_SESSION": {
+      // Full reset of all state - use when starting fresh tests
+      state.sessionId = null;
+      state.domain = null;
+      state.keystrokes = [];
+      state.pasteEvents = [];
+      state.totalTypedChars = 0;
+      state.totalPastedChars = 0;
+      state.totalAiChars = 0;
+      state.startTime = null;
+      state.isRecording = false;
+      state.signatureCount = 0;
+      state.lastVerification = null;
+
+      // Clear persisted state
+      try {
+        await chrome.storage.session.remove("sessionState");
+      } catch (e) {
+        console.warn("Failed to clear session storage:", e);
+      }
+
+      // Clear badge
+      await chrome.action.setBadgeText({ text: "" });
+
+      console.log("[HumanSign Background] Session fully reset");
       return { success: true };
     }
 

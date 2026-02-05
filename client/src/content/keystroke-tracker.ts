@@ -696,6 +696,12 @@ class KeystrokeTracker {
   ): Promise<ExtensionResponse<T>> {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(message, (response: ExtensionResponse<T>) => {
+        if (chrome.runtime.lastError) {
+          // Context invalidated or other runtime error
+          console.warn("[HumanSign] Message send failed:", chrome.runtime.lastError.message);
+          resolve({ success: false, error: chrome.runtime.lastError.message || "Runtime error" });
+          return;
+        }
         resolve(
           response ?? { success: false, error: "No response from background" },
         );
